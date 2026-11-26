@@ -24,6 +24,7 @@
   --ok:#5fcf75; --warn:#f0a73a; --bad:#ff6b6b;
   --plot-bg:#111a20; --grid:#22303a; color-scheme:dark}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.55;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 32px}
 .wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
@@ -51,7 +52,8 @@ input[type=number]{width:84px;font-family:var(--f-num)}
 .viewer{position:relative;width:100%;max-width:100%;aspect-ratio:1/1;background:#0b0f12;border-radius:8px;overflow:hidden;touch-action:manipulation}
 .viewer canvas{width:100%;height:100%;display:block;object-fit:contain;cursor:crosshair}
 .viewer .hint{position:absolute;left:8px;right:8px;bottom:8px;background:rgba(10,16,20,.78);color:#fff;font-size:12px;padding:6px 10px;border-radius:6px}
-.calsteps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.calsteps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+@media (max-width:560px){.calsteps{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .calsteps button{display:flex;flex-direction:column;align-items:flex-start;gap:0;text-align:left;padding:6px 10px}
 .calsteps button small{font-family:var(--f-num);font-size:11px;color:var(--muted)}
 .calsteps button[aria-pressed="true"]{border-color:var(--needle);box-shadow:inset 0 0 0 1px var(--needle)}
@@ -84,6 +86,11 @@ tr.flag td{color:var(--warn)}
 .range input{width:100%;min-width:0}
 .actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .actions button{width:100%;padding-inline:6px}
+.setuphead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.setuphead button{font-weight:700}
+.chev{display:inline-block;transition:transform .15s}
+#setupToggle[aria-expanded="false"] .chev{transform:rotate(-90deg)}
+.setup{display:flex;flex-direction:column;gap:12px}
 details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -113,6 +120,11 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
       </div>
       <div id="srcMsg" class="msg" hidden></div>
 
+      <div class="setuphead">
+        <button id="setupToggle" aria-expanded="true" aria-controls="setupBody"><span class="chev" aria-hidden="true">▾</span> 計器レンジ・校正を閉じる</button>
+        <span id="setupSum" class="note"></span>
+      </div>
+      <div id="setupBody" class="setup">
       <div class="row" style="justify-content:space-between">
         <h2>計器のレンジ</h2>
         <span class="note" id="tolNote"></span>
@@ -125,13 +137,15 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 
       <div class="row" style="justify-content:space-between">
         <h2>校正</h2>
-        <span class="note">画面をタップして3点を指定</span>
+        <span class="note">画面をタップして指定（④は推奨）</span>
       </div>
       <div class="calsteps">
         <button id="calC" data-k="c"><span>① 中心</span><small>未設定</small></button>
         <button id="calZ" data-k="z"><span id="calZt">② 最小目盛</span><small>未設定</small></button>
         <button id="calM" data-k="m"><span id="calMt">③ 最大目盛</span><small>未設定</small></button>
+        <button id="calT" data-k="t"><span>④ 針の先端</span><small>未設定</small></button>
       </div>
+      <div id="needleInfo" class="note" hidden></div>
       <div class="row">
         <label class="row" style="gap:6px"><input id="invert" type="checkbox"> 針が文字板より明るい</label>
         <button id="calReset">校正をやり直す</button>
@@ -144,8 +158,10 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
       <details>
         <summary>設置と読取りのコツ</summary>
         <p class="note">スマホを圧力計の正面に固定し、文字板が画面いっぱいに映るようにします。斜めから撮ると角度が歪み誤差になります。針の影や照明の映り込みも誤読の原因になるので、拡散光で照らしてください。読取りは中心から目盛半径の 22〜52% の帯で最も暗い放射線を探す方式です。信頼度が低い回は「要確認」として記録されます。</p>
+        <p class="note">「④ 針の先端」をタップすると、その瞬間の針の色と長さを学習します。以後は学習した針の色に近い線だけを針として探し、探す範囲も針の長さに合わせるため、文字板の数字・ロゴ・影を針と誤認しにくくなります。照明を変えたときや針の色が見えにくいときは、もう一度先端をタップして学び直してください。</p>
         <p class="note">「目盛板を追従」をオンにすると、校正した時点の文字板の見え方を基準に、1秒ごとに画面内での位置ずれを探して校正点を自動で動かします。スマホのずれや振動による平行移動には追従しますが、大きな回転・傾き・ズーム変化には追従できません。見失った回は「要確認」として記録されます。</p>
       </details>
+      </div>
     </section>
 
     <!-- 右：現在値・トレンド・ログ -->
@@ -260,7 +276,7 @@ function cal(){
   const b = calBase(), tr = state.track;
   if(!tr.on || !tr.ref) return b;
   const ox = tr.off.x/720, oy = tr.off.y/720, sh = p => p ? {x:p.x+ox, y:p.y+oy} : null;
-  return { c: sh(b.c), z: sh(b.z), m: sh(b.m) };
+  return { c: sh(b.c), z: sh(b.z), m: sh(b.m), t: sh(b.t), needle: b.needle };
 }
 
 // ---------- demo gauge ----------
@@ -405,47 +421,108 @@ function grabFrame(t){
 }
 
 // ---------- calibration ----------
-const calKeys = ["c","z","m"];
+const calKeys = ["c","z","m","t"];
 function calComplete(){ const c = cal(); return !!(c.c && c.z && c.m); }
 function startCal(k){
   if(state.src === "demo"){ showSrcMsg("デモは校正済みです。カメラか画像に切り替えると校正できます。"); return; }
+  if(state.calMode === k){ endCal(); return; }          // もう一度押すと取り消し（④の省略にも使う）
+  setSetupOpen(true);
   state.calMode = k; updateCalUI();
 }
 function endCal(){ state.calMode = null; updateCalUI(); }
 function updateCalUI(){
   const c = cal();
-  const names = {c:"① 中心", z:`② 最小目盛（${fr(range.min)}）`, m:`③ 最大目盛（${fr(range.max)}）`};
+  const names = {c:"① 中心", z:`② 最小目盛（${fr(range.min)}）`, m:`③ 最大目盛（${fr(range.max)}）`, t:"④ 針の先端"};
   $("calZt").textContent = names.z; $("calMt").textContent = names.m;
   for(const k of calKeys){
     const b = $("cal"+k.toUpperCase());
     b.setAttribute("aria-pressed", String(state.calMode===k));
     b.classList.toggle("set", !!c[k]);
-    b.querySelector("small").textContent = c[k] ? `x ${(c[k].x*100).toFixed(1)} / y ${(c[k].y*100).toFixed(1)}` : "未設定";
+    b.querySelector("small").textContent = c[k] ? (k === "t" ? (c.needle ? "学習済み" : "要再タップ") : `x ${(c[k].x*100).toFixed(1)} / y ${(c[k].y*100).toFixed(1)}`) : (k === "t" ? "未設定（推奨）" : "未設定");
     b.disabled = state.src === "demo";
   }
   $("calReset").disabled = state.src === "demo";
   const h = $("hint");
   if(state.calMode){
-    const tips = { c:"針の軸（中心キャップ）の中央をタップ", z:`${fr(range.min)} の目盛線の外端をタップ`, m:`${fr(range.max)} の目盛線の外端をタップ` };
+    const tips = { c:"針の軸（中心キャップ）の中央をタップ", z:`${fr(range.min)} の目盛線の外端をタップ`, m:`${fr(range.max)} の目盛線の外端をタップ`, t:"指示針の先端をタップ（省略するときは ④ をもう一度押す）" };
     h.textContent = names[state.calMode] + "：" + tips[state.calMode]; h.hidden = false;
   } else h.hidden = true;
+  updateSetupSum();
 }
 for(const k of calKeys) $("cal"+k.toUpperCase()).onclick = () => startCal(k);
-$("calReset").onclick = () => { state.cal.live = {c:null,z:null,m:null}; store.set("cal", state.cal.live); state.last=null; startCal("c"); };
+$("calReset").onclick = () => { state.cal.live = {c:null,z:null,m:null,t:null}; store.set("cal", state.cal.live); $("needleInfo").hidden = true; state.last=null; startCal("c"); };
 view.addEventListener("pointerdown", e => {
   if(!state.calMode) return;
   const r = view.getBoundingClientRect();
   const p = { x: (e.clientX - r.left)/r.width, y: (e.clientY - r.top)/r.height };
-  const tr = state.track;
+  const tr = state.track, key = state.calMode, pCur = {x:p.x, y:p.y};
   if(tr.on && tr.ref){ p.x -= tr.off.x/720; p.y -= tr.off.y/720; }   // 基準フレーム座標で保存
-  state.cal.live[state.calMode] = p; store.set("cal", state.cal.live);
-  const i = calKeys.indexOf(state.calMode);
+  const wasComplete = calComplete();
+  state.cal.live[key] = p;
+  if(key !== "t" && state.cal.live.needle){ delete state.cal.live.needle; state.cal.live.t = null; }  // 幾何が変わったら先端は取り直し
+  store.set("cal", state.cal.live);
+  const i = calKeys.indexOf(key);
   const next = calKeys.slice(i+1).find(k => !state.cal.live[k]);
-  if(next) state.calMode = next; else { state.calMode = null; if(calComplete()){ if(tr.on) rebaseTrack(); readNow(); } }
+  state.calMode = next || null;
+  if(key === "t") learnNeedle(pCur);
+  if(calComplete() && (key === "t" || !wasComplete || !next)){
+    if(tr.on) rebaseTrack();
+    if(!next) readNow();
+  }
   updateCalUI();
 });
 $("invert").checked = state.invert;
 $("invert").onchange = e => { state.invert = e.target.checked; store.set("invert", state.invert); };
+
+// ---------- needle tip learning ----------
+const cdist = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]);
+function medianRGB(list){
+  if(!list.length) return [0,0,0];
+  return [0,1,2].map(ch => { const v = list.map(p => p[ch]).sort((x,y)=>x-y); return v[v.length>>1]; });
+}
+function learnNeedle(tipCur){
+  const info = $("needleInfo");
+  const c = cal();
+  if(!(c.c && c.z && c.m)){ info.textContent = "先に ①〜③ を設定してください。"; info.hidden = false; return; }
+  grabFrame(performance.now());
+  const W = frame.width, g = geometry(c, W), data = fctx.getImageData(0,0,W,W).data;
+  const px = (x,y) => { if(x<0||y<0||x>=W||y>=W) return null; const i = ((y|0)*W + (x|0))*4; return [data[i], data[i+1], data[i+2]]; };
+  const tx = tipCur.x*W, ty = tipCur.y*W, rT = Math.hypot(tx-g.cx, ty-g.cy);
+  if(rT < g.R*0.3){ info.textContent = "先端が中心に近すぎます。針の一番外側の先をタップしてください。"; info.hidden = false; delete state.cal.live.needle; store.set("cal", state.cal.live); return; }
+  let aT = Math.atan2(ty-g.cy, tx-g.cx);
+  const ray = (a, r0, r1, st) => { const o = []; for(let r=r0; r<=r1; r+=st){ const q = px(g.cx + r*Math.cos(a), g.cy + r*Math.sin(a)); if(q) o.push(q); } return o; };
+  const D = Math.PI/180;
+  let bgS = [];
+  for(const d of [-16,-12,-9,9,12,16]) bgS = bgS.concat(ray(aT + d*D, rT*0.35, rT*0.9, 2));
+  const bg = medianRGB(bgS);
+  // タップ角の±3°で、背景と最も違う放射線に合わせる
+  let best = aT, bestS = -1;
+  for(let a = aT-3*D; a <= aT+3*D; a += 0.2*D){
+    const pts = ray(a, rT*0.35, rT*0.9, 2); let s = 0; for(const q of pts) s += cdist(q, bg);
+    s /= Math.max(1, pts.length); if(s > bestS){ bestS = s; best = a; }
+  }
+  aT = best;
+  const nc = medianRGB(ray(aT, rT*0.35, rT*0.9, 1));
+  const contrast = cdist(nc, bg);
+  state.cal.live.needle = { ratio: rT/g.R, nc, bg, contrast: +contrast.toFixed(1) };
+  store.set("cal", state.cal.live);
+  // 学習直後に自動検出して、タップ位置との差を確認
+  const det = detect();
+  let tapRad = mod(aT - g.a0, TAU); if(tapRad > TAU - 0.35) tapRad -= TAU;
+  const tapDeg = tapRad*180/Math.PI;
+  const diff = det.error ? null : Math.abs(det.angleDeg - tapDeg);
+  const sw = (a) => `<span style="display:inline-block;width:.9em;height:.9em;border-radius:3px;vertical-align:-1px;border:1px solid var(--line);background:rgb(${a.map(v=>Math.round(v)).join(",")})"></span>`;
+  let msg = `針を学習しました：針の色 ${sw(nc)} / 文字板 ${sw(bg)}、長さ 目盛半径の${Math.round(rT/g.R*100)}%。`;
+  if(diff !== null) msg += ` 自動検出との差 ${diff.toFixed(1)}°`;
+  if(contrast < 35) msg += "。針と文字板の色の差が小さいため、照明を明るくするか先端を取り直してください。";
+  else if(diff !== null && diff > 2) msg += "。差が大きいため、先端をもう一度正確にタップしてください。";
+  info.innerHTML = msg; info.hidden = false;
+}
+function bandRadii(c, R){
+  const nm = c.needle;
+  if(nm) return [R*nm.ratio*0.3, R*nm.ratio*0.92];
+  return [R*R_IN, R*R_OUT];
+}
 
 // ---------- needle detection ----------
 const TAU = Math.PI*2;
@@ -465,7 +542,8 @@ function detect(){
   const data = fctx.getImageData(0,0,W,W).data;
   const lum = (x,y) => { const i = ((y|0)*W + (x|0))*4; return 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2]; };
   const margin = 10*Math.PI/180, step = 0.25*Math.PI/180;
-  const r1 = R*R_IN, r2 = R*R_OUT;
+  const [r1, r2] = bandRadii(c, R), nm = c.needle;
+  const nD = nm ? Math.max(40, nm.contrast) : 0;
   const prof = [], angs = [];
   for(let k=-margin; k<=sweep+margin; k+=step){
     const a = a0 + k, ca = Math.cos(a), sa = Math.sin(a);
@@ -473,7 +551,12 @@ function detect(){
     for(let r=r1; r<=r2; r+=1){
       const x = cx + r*ca, y = cy + r*sa;
       if(x<0||y<0||x>=W||y>=W) continue;
-      const L = lum(x,y); s += state.invert ? L : 255-L; n++;
+      if(nm){
+        const i = ((y|0)*W + (x|0))*4;
+        const d = Math.hypot(data[i]-nm.nc[0], data[i+1]-nm.nc[1], data[i+2]-nm.nc[2]);
+        s += 255*Math.max(0, 1 - d/nD);
+      } else { const L = lum(x,y); s += state.invert ? L : 255-L; }
+      n++;
     }
     prof.push(n ? s/n : 0); angs.push(k);
   }
@@ -571,6 +654,8 @@ function updateTrackPill(){
   if(tr.lost) return setPill(el, "bad", "目盛板を見失いました");
   setPill(el, "ok", `追従中 Δx ${tr.off.x.toFixed(0)} / Δy ${tr.off.y.toFixed(0)} px`);
 }
+const _utp = updateTrackPill;
+updateTrackPill = function(){ _utp(); updateSetupSum(); };
 $("trackOn").checked = state.track.on;
 $("trackOn").onchange = e => {
   const tr = state.track; tr.on = e.target.checked; store.set("track", tr.on);
@@ -779,8 +864,9 @@ function overlay(t){
     const g = geometry(c, W);
     // search band + scale arc
     vctx.save(); vctx.setLineDash([5,6]); vctx.strokeStyle="rgba(79,179,209,.85)"; vctx.lineWidth=1.5;
-    vctx.beginPath(); vctx.arc(g.cx,g.cy,g.R*R_IN,g.a0,g.a0+g.sweep); vctx.stroke();
-    vctx.beginPath(); vctx.arc(g.cx,g.cy,g.R*R_OUT,g.a0,g.a0+g.sweep); vctx.stroke();
+    const [b1, b2] = bandRadii(c, g.R);
+    vctx.beginPath(); vctx.arc(g.cx,g.cy,b1,g.a0,g.a0+g.sweep); vctx.stroke();
+    vctx.beginPath(); vctx.arc(g.cx,g.cy,b2,g.a0,g.a0+g.sweep); vctx.stroke();
     vctx.setLineDash([]); vctx.strokeStyle="rgba(79,179,209,.5)"; vctx.lineWidth=2;
     vctx.beginPath(); vctx.arc(g.cx,g.cy,g.R,g.a0,g.a0+g.sweep); vctx.stroke(); vctx.restore();
   }
@@ -788,7 +874,7 @@ function overlay(t){
     vctx.fillStyle = "rgba(255,255,255,.8)"; vctx.font = "500 26px "+css("--f-body"); vctx.textAlign = "center";
     vctx.fillText("カメラ停止中", W/2, W/2); vctx.textAlign = "start";
   }
-  mark(c.c,"中心"); mark(c.z,fr(range.min)); mark(c.m,fr(range.max));
+  mark(c.c,"中心"); mark(c.z,fr(range.min)); mark(c.m,fr(range.max)); mark(c.t,"先端");
   // last detected needle
   if(state.last && state.last.geo){
     const r = state.last, s = W/frame.width, g = r.geo;
@@ -830,6 +916,23 @@ function applyRange(){
 $("rMin").addEventListener("change", applyRange);
 $("rMax").addEventListener("change", applyRange);
 renderRange();
+
+// ---------- collapsible setup ----------
+function setSetupOpen(open){
+  $("setupBody").hidden = !open;
+  const b = $("setupToggle"); b.setAttribute("aria-expanded", String(open));
+  b.lastChild.nodeValue = open ? " 計器レンジ・校正を閉じる" : " 計器レンジ・校正を開く";
+  $("setupSum").hidden = open;
+  store.set("setupOpen", open);
+  updateSetupSum();
+}
+function updateSetupSum(){
+  const el = $("setupSum"); if(!el) return;
+  const c = cal();
+  el.textContent = `レンジ ${fr(range.min)}〜${fr(range.max)} MPa ・ 校正${calComplete() ? "済み" : "未完了"}${c.needle ? "（先端学習済み）" : ""} ・ 追従${state.track.on ? "オン" : "オフ"}`;
+}
+$("setupToggle").onclick = () => { const open = $("setupBody").hidden; if(!open && state.calMode) endCal(); setSetupOpen(open); };
+setSetupOpen(store.get("setupOpen", true));
 
 // ---------- boot ----------
 updateCalUI(); renderStats(); renderTable();
