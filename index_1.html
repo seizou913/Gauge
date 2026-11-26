@@ -1,0 +1,837 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0f6a86"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<title>圧力計ウォッチ</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: 計器パネル風 2カラム（左=ビューア＋校正、右=現在値・トレンド・ログ）。狭い画面では1カラム */
+:root{
+  --bg:#e9edf0; --panel:#f8fafb; --ink:#17232b; --muted:#5a6a75; --line:#cfd8de;
+  --accent:#0f6a86; --accent-ink:#ffffff; --needle:#d9480f;
+  --ok:#2b8a3e; --warn:#c77700; --bad:#c92a2a;
+  --plot-bg:#ffffff; --grid:#e3e9ed;
+  --f-body:"IBM Plex Sans JP",system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f161b; --panel:#162027; --ink:#e3eaee; --muted:#93a4ae; --line:#2a3842;
+  --accent:#4fb3d1; --accent-ink:#06222c; --needle:#ff7a3d;
+  --ok:#5fcf75; --warn:#f0a73a; --bad:#ff6b6b;
+  --plot-bg:#111a20; --grid:#22303a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f161b; --panel:#162027; --ink:#e3eaee; --muted:#93a4ae; --line:#2a3842;
+  --accent:#4fb3d1; --accent-ink:#06222c; --needle:#ff7a3d;
+  --ok:#5fcf75; --warn:#f0a73a; --bad:#ff6b6b;
+  --plot-bg:#111a20; --grid:#22303a; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 32px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 16px}
+h1{font-size:20px;margin:0;font-weight:700;letter-spacing:.02em}
+.spec{font-family:var(--f-num);font-size:12px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:14px}
+@media (max-width:860px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+h2{font-size:14px;margin:0;font-weight:700}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:transparent}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+button{font:inherit;font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;min-height:36px}
+button:hover{border-color:var(--accent)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+button.danger{color:var(--bad)}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,select{font:inherit;font-size:13px;color:var(--ink);background:var(--plot-bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-height:36px}
+input[type=number]{width:84px;font-family:var(--f-num)}
+.viewer{position:relative;width:100%;max-width:100%;aspect-ratio:1/1;background:#0b0f12;border-radius:8px;overflow:hidden;touch-action:manipulation}
+.viewer canvas{width:100%;height:100%;display:block;object-fit:contain;cursor:crosshair}
+.viewer .hint{position:absolute;left:8px;right:8px;bottom:8px;background:rgba(10,16,20,.78);color:#fff;font-size:12px;padding:6px 10px;border-radius:6px}
+.calsteps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.calsteps button{display:flex;flex-direction:column;align-items:flex-start;gap:0;text-align:left;padding:6px 10px}
+.calsteps button small{font-family:var(--f-num);font-size:11px;color:var(--muted)}
+.calsteps button[aria-pressed="true"]{border-color:var(--needle);box-shadow:inset 0 0 0 1px var(--needle)}
+.calsteps button.set small{color:var(--ok)}
+.readout{display:grid;grid-template-columns:auto 1fr;gap:4px 18px;align-items:end}
+.big{font-family:var(--f-num);font-size:46px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.big small{font-size:16px;font-weight:500;color:var(--muted);margin-left:6px}
+.meta{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--muted);font-family:var(--f-num)}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;padding:2px 10px;border-radius:999px;border:1px solid currentColor;width:max-content}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--ok)} .pill.warn{color:var(--warn)} .pill.bad{color:var(--bad)} .pill.idle{color:var(--muted)}
+.plot{width:100%;height:220px;display:block;background:var(--plot-bg);border:1px solid var(--line);border-radius:8px}
+.tablewrap{overflow-x:auto;max-height:260px;overflow-y:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:5px 10px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--grid)}
+th{position:sticky;top:0;background:var(--panel);font-weight:500;color:var(--muted);font-size:11.5px}
+td:first-child,th:first-child{text-align:left}
+td.num{font-family:var(--f-num)}
+tr.flag td{color:var(--warn)}
+.note{font-size:12px;color:var(--muted);margin:0;max-width:70ch}
+.msg{font-size:12.5px;padding:8px 10px;border-radius:8px;border:1px dashed var(--line);color:var(--muted)}
+.msg.err{border-color:var(--bad);color:var(--bad)}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.stats div{display:flex;flex-direction:column;gap:0}
+.stats b{font-family:var(--f-num);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+@media (max-width:480px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.big{font-size:40px}}
+.range{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.range label{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--muted)}
+.range .inp{display:flex;align-items:center;gap:6px;color:var(--ink)}
+.range input{width:100%;min-width:0}
+details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>圧力計ウォッチ</h1>
+    <span class="spec" id="spec">ブルドン管圧力計 φ100 / 1.6級</span>
+  </header>
+
+  <div class="grid">
+    <!-- 左：カメラと校正 -->
+    <section class="panel" aria-label="撮影と校正">
+      <div class="row" style="justify-content:space-between">
+        <div class="seg" role="group" aria-label="映像ソース">
+          <button id="srcCam" aria-pressed="false">カメラ</button>
+          <button id="srcImg" aria-pressed="false">画像</button>
+          <button id="srcDemo" aria-pressed="true">デモ</button>
+        </div>
+        <input id="fileIn" type="file" accept="image/*" capture="environment" hidden>
+        <span id="srcPill" class="pill idle">デモ映像</span>
+      </div>
+
+      <div class="viewer">
+        <canvas id="view" width="720" height="720" aria-label="圧力計の映像。校正中はタップで点を指定"></canvas>
+        <div id="hint" class="hint" hidden></div>
+      </div>
+      <div id="srcMsg" class="msg" hidden></div>
+
+      <div class="row" style="justify-content:space-between">
+        <h2>計器のレンジ</h2>
+        <span class="note" id="tolNote"></span>
+      </div>
+      <div class="range">
+        <label for="rMin">最小値（目盛の始点）<span class="inp"><input id="rMin" type="number" step="any" inputmode="decimal" value="0"> MPa</span></label>
+        <label for="rMax">最大値（目盛の終点）<span class="inp"><input id="rMax" type="number" step="any" inputmode="decimal" value="1.6"> MPa</span></label>
+      </div>
+      <div id="rMsg" class="msg err" hidden></div>
+
+      <div class="row" style="justify-content:space-between">
+        <h2>校正</h2>
+        <span class="note">画面をタップして3点を指定</span>
+      </div>
+      <div class="calsteps">
+        <button id="calC" data-k="c"><span>① 中心</span><small>未設定</small></button>
+        <button id="calZ" data-k="z"><span id="calZt">② 最小目盛</span><small>未設定</small></button>
+        <button id="calM" data-k="m"><span id="calMt">③ 最大目盛</span><small>未設定</small></button>
+      </div>
+      <div class="row">
+        <label class="row" style="gap:6px"><input id="invert" type="checkbox"> 針が文字板より明るい</label>
+        <button id="calReset">校正をやり直す</button>
+      </div>
+      <div class="row">
+        <label class="row" style="gap:6px"><input id="trackOn" type="checkbox"> 目盛板を追従（1秒ごと）</label>
+        <button id="trackRef">追従の基準を取り直す</button>
+        <span id="trackPill" class="pill idle">追従オフ</span>
+      </div>
+      <details>
+        <summary>設置と読取りのコツ</summary>
+        <p class="note">スマホを圧力計の正面に固定し、文字板が画面いっぱいに映るようにします。斜めから撮ると角度が歪み誤差になります。針の影や照明の映り込みも誤読の原因になるので、拡散光で照らしてください。読取りは中心から目盛半径の 22〜52% の帯で最も暗い放射線を探す方式です。信頼度が低い回は「要確認」として記録されます。</p>
+        <p class="note">「目盛板を追従」をオンにすると、校正した時点の文字板の見え方を基準に、1秒ごとに画面内での位置ずれを探して校正点を自動で動かします。スマホのずれや振動による平行移動には追従しますが、大きな回転・傾き・ズーム変化には追従できません。見失った回は「要確認」として記録されます。</p>
+      </details>
+    </section>
+
+    <!-- 右：現在値・トレンド・ログ -->
+    <section class="panel" aria-label="監視結果">
+      <div class="row" style="justify-content:space-between">
+        <span class="label">現在値</span>
+        <span id="runPill" class="pill idle">停止中</span>
+      </div>
+      <div class="readout">
+        <div class="big" id="bigVal">—<small>MPa</small></div>
+        <div class="meta">
+          <span id="mTime">読取りなし</span>
+          <span id="mAng">針角度 —</span>
+          <span id="mConf">信頼度 —</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="intv">間隔</label>
+        <input id="intv" type="number" min="1" step="1" value="10">
+        <select id="unit" aria-label="間隔の単位"><option value="1">秒</option><option value="60" selected>分</option><option value="3600">時間</option></select>
+        <button id="startBtn" class="primary">監視を開始</button>
+        <button id="nowBtn">今すぐ読取り</button>
+      </div>
+      <div class="note" id="nextInfo">次回読取り：—</div>
+
+      <div class="stats">
+        <div><span class="label">件数</span><b id="sN">0</b></div>
+        <div><span class="label">最小</span><b id="sMin">—</b></div>
+        <div><span class="label">最大</span><b id="sMax">—</b></div>
+        <div><span class="label">平均</span><b id="sAvg">—</b></div>
+      </div>
+
+      <div class="row" style="justify-content:space-between">
+        <h2>トレンド</h2>
+        <div class="seg" role="group" aria-label="縦軸">
+          <button id="yFull" aria-pressed="true">全レンジ</button>
+          <button id="yAuto" aria-pressed="false">自動</button>
+        </div>
+      </div>
+      <canvas id="plot" class="plot" aria-label="圧力の推移グラフ"></canvas>
+
+      <div class="row" style="justify-content:space-between">
+        <h2>ログ</h2>
+        <div class="row">
+          <button id="csvBtn">CSVを保存</button>
+          <button id="copyBtn">CSVをコピー</button>
+          <button id="clearBtn" class="danger">消去</button>
+        </div>
+      </div>
+      <div id="clearConfirm" class="msg" hidden>
+        ログ <b id="clearN">0</b> 件を消去します。
+        <button id="clearYes" class="danger">消去する</button>
+        <button id="clearNo">やめる</button>
+      </div>
+      <div id="csvMsg" class="note" hidden></div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>日時</th><th>圧力 MPa</th><th>角度°</th><th>信頼度</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <p class="note">ログはこの端末のブラウザ内に保存されます。長時間の監視では定期的にCSVを保存してください。画面が消えたりアプリが裏に回るとタイマーが止まるため、監視中は画面点灯を維持します（対応端末のみ）。</p>
+    </section>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const CLASS = 1.6;           // 精度等級 [%FS]
+const R_IN = 0.22, R_OUT = 0.52;
+const CONF_OK = 6, CONF_WARN = 3.5;
+
+const $ = id => document.getElementById(id);
+const view = $("view"), vctx = view.getContext("2d");
+const frame = document.createElement("canvas"); frame.width = frame.height = 720;
+const fctx = frame.getContext("2d", { willReadFrequently: true });
+
+// ---------- storage (per-viewer convenience) ----------
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem("gw_"+k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem("gw_"+k, JSON.stringify(v)); }catch(e){} }
+};
+
+// ---------- range (user input) ----------
+const range = (() => { const g = store.get("range", null); return (g && isFinite(g.min) && isFinite(g.max) && g.max > g.min) ? g : {min:0, max:1.6}; })();
+const span = () => range.max - range.min;
+const TOL = () => span() * CLASS / 100;
+const vd = () => span() <= 2.5 ? 3 : span() <= 25 ? 2 : 1;        // 表示桁
+const fv = v => v.toFixed(vd());
+const fr = v => String(+v.toFixed(4));                            // レンジ表記
+const DEMO_CAL = (() => {
+  const r = 0.4;
+  const a0 = 135*Math.PI/180, a1 = 45*Math.PI/180;
+  return { c:{x:.5,y:.5}, z:{x:.5+r*Math.cos(a0), y:.5+r*Math.sin(a0)}, m:{x:.5+r*Math.cos(a1), y:.5+r*Math.sin(a1)} };
+})();
+
+const state = {
+  src: "demo",
+  cal: { demo: DEMO_CAL, live: store.get("cal", {c:null,z:null,m:null}) },
+  calMode: null,
+  invert: store.get("invert", false),
+  log: store.get("log", []),
+  running: false, timer: null, nextAt: 0,
+  last: null, yAuto: false,
+  video: null, stream: null, img: null,
+  wake: null,
+  track: { on: store.get("track", false), ref: null, off: {x:0,y:0}, score: 0, lost: false, t0: 0 }
+};
+const calBase = () => state.src === "demo" ? state.cal.demo : state.cal.live;
+function cal(){
+  const b = calBase(), tr = state.track;
+  if(!tr.on || !tr.ref) return b;
+  const ox = tr.off.x/720, oy = tr.off.y/720, sh = p => p ? {x:p.x+ox, y:p.y+oy} : null;
+  return { c: sh(b.c), z: sh(b.z), m: sh(b.m) };
+}
+
+// ---------- demo gauge ----------
+let demoV = 0.92;
+function demoValue(t){
+  const s = t/1000;
+  demoV = range.min + span()*(0.6 + 0.14*Math.sin(s/37) + 0.04*Math.sin(s/7.3));
+  return Math.max(range.min, Math.min(range.max, demoV));
+}
+function drawDemo(ctx, W, t){
+  const v = demoValue(t);
+  const cx = W/2, cy = W/2, R = W*0.47;
+  ctx.fillStyle = "#3b4247"; ctx.fillRect(0,0,W,W);
+  // bezel
+  const g = ctx.createRadialGradient(cx-R*.3, cy-R*.3, R*.2, cx, cy, R*1.05);
+  g.addColorStop(0,"#d9dde0"); g.addColorStop(1,"#7d868c");
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = "#f7f6f2"; ctx.beginPath(); ctx.arc(cx,cy,R*.9,0,Math.PI*2); ctx.fill();
+  const rt = W*0.4; // tick outer radius == calibration radius
+  const a0 = 135*Math.PI/180, sw = 270*Math.PI/180;
+  ctx.strokeStyle = "#1b1b1b"; ctx.fillStyle = "#1b1b1b"; ctx.lineCap = "butt";
+  const nice = [0.01,0.02,0.05,0.1,0.2,0.25,0.5,1,2,2.5,5,10,20,25,50,100];
+  const mstep = nice.find(st => span()/st <= 9) || span()/8;
+  const ldec = mstep >= 1 ? 0 : mstep >= 0.1 && Math.abs(mstep*10 - Math.round(mstep*10)) < 1e-9 ? 1 : 2;
+  const nMin = Math.round(span()/(mstep/4));
+  for(let i=0;i<=nMin;i++){
+    const val = range.min + i*mstep/4; if(val > range.max + 1e-9) break;
+    const a = a0 + sw*(val-range.min)/span();
+    const major = i%4===0, mid = i%2===0;
+    const r1 = rt - (major? W*.06 : mid? W*.04 : W*.025);
+    ctx.lineWidth = major? 3.2 : 1.6;
+    ctx.beginPath(); ctx.moveTo(cx+rt*Math.cos(a), cy+rt*Math.sin(a)); ctx.lineTo(cx+r1*Math.cos(a), cy+r1*Math.sin(a)); ctx.stroke();
+    if(major){
+      ctx.font = `600 ${W*.045}px "IBM Plex Mono", monospace`; ctx.textAlign="center"; ctx.textBaseline="middle";
+      const rl = rt - W*.105;
+      ctx.fillText(val.toFixed(ldec), cx+rl*Math.cos(a), cy+rl*Math.sin(a));
+    }
+  }
+  ctx.font = `500 ${W*.04}px "IBM Plex Sans JP", sans-serif`; ctx.textAlign="center";
+  ctx.fillText("MPa", cx, cy+W*.17);
+  ctx.font = `400 ${W*.028}px "IBM Plex Mono", monospace`;
+  ctx.fillText("CL1.6", cx-W*.12, cy+W*.25); ctx.fillText("φ100", cx+W*.12, cy+W*.25);
+  // needle
+  const a = a0 + sw*(v-range.min)/span();
+  ctx.save(); ctx.translate(cx,cy); ctx.rotate(a);
+  ctx.fillStyle = "#111";
+  ctx.beginPath(); ctx.moveTo(-W*.09, -W*.012); ctx.lineTo(rt*.93, -W*.003); ctx.lineTo(rt*.93, W*.003); ctx.lineTo(-W*.09, W*.012); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = "#222"; ctx.beginPath(); ctx.arc(cx,cy,W*.035,0,Math.PI*2); ctx.fill();
+  // glass glare + noise
+  const gl = ctx.createLinearGradient(cx-R, cy-R, cx+R*.2, cy+R*.2);
+  gl.addColorStop(0,"rgba(255,255,255,.22)"); gl.addColorStop(.5,"rgba(255,255,255,0)");
+  ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(cx,cy,R*.9,0,Math.PI*2); ctx.fill();
+  return v;
+}
+
+// ---------- source handling ----------
+function setSrcButtons(){
+  for(const [id,k] of [["srcCam","cam"],["srcImg","img"],["srcDemo","demo"]]) $(id).setAttribute("aria-pressed", String(state.src===k));
+}
+function showSrcMsg(text, err){ const m=$("srcMsg"); m.textContent=text; m.className="msg"+(err?" err":""); m.hidden=!text; }
+function setPill(el, cls, text){ el.className = "pill "+cls; el.textContent = text; }
+
+function stopCamera(){
+  if(state.stream){ state.stream.getTracks().forEach(t=>t.stop()); state.stream=null; }
+  state.video = null;
+}
+async function useCamera(){
+  stopIfRunning();
+  state.src = "cam"; setSrcButtons(); state.last = null;
+  showSrcMsg("");
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    setPill($("srcPill"),"bad","カメラ不可");
+    showSrcMsg("このブラウザ環境ではカメラを使えません。HTTPSで配信したこのページをスマホのChrome/Safariで直接開いてください（下記の配布用HTMLを使用）。", true);
+    return;
+  }
+  try{
+    const s = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:"environment"}, width:{ideal:1280}, height:{ideal:1280} }, audio:false });
+    const v = document.createElement("video"); v.playsInline = true; v.muted = true; v.srcObject = s;
+    await v.play();
+    state.stream = s; state.video = v;
+    setPill($("srcPill"),"ok","カメラ稼働");
+    state.track.ref = null; updateTrackPill();
+    if(state.track.on && calComplete()) setTimeout(() => { if(state.src === "cam") rebaseTrack(); }, 800);
+    if(!calComplete()) startCal("c");
+  }catch(e){
+    setPill($("srcPill"),"bad","カメラ不可");
+    showSrcMsg("カメラを起動できませんでした（"+(e && e.name || "エラー")+"）。claude.ai 上ではカメラを使えません。リアルタイム監視には配布版（gauge-watch-pwa.zip）をHTTPSで公開し、スマホのホーム画面に追加して使ってください。すぐに試すだけなら「画像」で写真を読み込めます。", true);
+  }
+}
+function useImage(){ $("fileIn").click(); }
+$("fileIn").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0]; if(!f) return;
+  const url = URL.createObjectURL(f);
+  const im = new Image();
+  im.onload = () => {
+    stopIfRunning(); stopCamera();
+    state.img = im; state.src = "img"; setSrcButtons(); state.last = null; state.track.ref = null; updateTrackPill();
+    setPill($("srcPill"),"ok","静止画像"); showSrcMsg("");
+    if(!calComplete()) startCal("c"); else readNow();
+  };
+  im.onerror = () => showSrcMsg("画像を読み込めませんでした。JPEGかPNGを選んでください。", true);
+  im.src = url;
+  e.target.value = "";
+});
+function useDemo(){
+  stopCamera(); state.src = "demo"; setSrcButtons(); state.last = null;
+  setPill($("srcPill"),"idle","デモ映像"); showSrcMsg(""); endCal();
+  state.track.ref = null; if(state.track.on) rebaseTrack(); updateTrackPill();
+}
+$("srcCam").onclick = useCamera; $("srcImg").onclick = useImage; $("srcDemo").onclick = useDemo;
+
+// draw current source into the square analysis frame (center-crop)
+function grabFrame(t){
+  const W = frame.width;
+  if(state.src === "demo"){
+    const sh = demoShift(t);
+    fctx.fillStyle = "#3b4247"; fctx.fillRect(0,0,W,W);
+    fctx.save(); fctx.translate(sh.x, sh.y); drawDemo(fctx, W, t); fctx.restore();
+    return true;
+  }
+  let el = null, w = 0, h = 0;
+  if(state.src === "cam" && state.video && state.video.videoWidth){ el = state.video; w = el.videoWidth; h = el.videoHeight; }
+  else if(state.src === "img" && state.img){ el = state.img; w = el.naturalWidth; h = el.naturalHeight; }
+  if(!el){ fctx.fillStyle="#0b0f12"; fctx.fillRect(0,0,W,W); return false; }
+  const s = Math.min(w,h), sx = (w-s)/2, sy = (h-s)/2;
+  fctx.drawImage(el, sx, sy, s, s, 0, 0, W, W);
+  return true;
+}
+
+// ---------- calibration ----------
+const calKeys = ["c","z","m"];
+function calComplete(){ const c = cal(); return !!(c.c && c.z && c.m); }
+function startCal(k){
+  if(state.src === "demo"){ showSrcMsg("デモは校正済みです。カメラか画像に切り替えると校正できます。"); return; }
+  state.calMode = k; updateCalUI();
+}
+function endCal(){ state.calMode = null; updateCalUI(); }
+function updateCalUI(){
+  const c = cal();
+  const names = {c:"① 中心", z:`② 最小目盛（${fr(range.min)}）`, m:`③ 最大目盛（${fr(range.max)}）`};
+  $("calZt").textContent = names.z; $("calMt").textContent = names.m;
+  for(const k of calKeys){
+    const b = $("cal"+k.toUpperCase());
+    b.setAttribute("aria-pressed", String(state.calMode===k));
+    b.classList.toggle("set", !!c[k]);
+    b.querySelector("small").textContent = c[k] ? `x ${(c[k].x*100).toFixed(1)} / y ${(c[k].y*100).toFixed(1)}` : "未設定";
+    b.disabled = state.src === "demo";
+  }
+  $("calReset").disabled = state.src === "demo";
+  const h = $("hint");
+  if(state.calMode){
+    const tips = { c:"針の軸（中心キャップ）の中央をタップ", z:`${fr(range.min)} の目盛線の外端をタップ`, m:`${fr(range.max)} の目盛線の外端をタップ` };
+    h.textContent = names[state.calMode] + "：" + tips[state.calMode]; h.hidden = false;
+  } else h.hidden = true;
+}
+for(const k of calKeys) $("cal"+k.toUpperCase()).onclick = () => startCal(k);
+$("calReset").onclick = () => { state.cal.live = {c:null,z:null,m:null}; store.set("cal", state.cal.live); state.last=null; startCal("c"); };
+view.addEventListener("pointerdown", e => {
+  if(!state.calMode) return;
+  const r = view.getBoundingClientRect();
+  const p = { x: (e.clientX - r.left)/r.width, y: (e.clientY - r.top)/r.height };
+  const tr = state.track;
+  if(tr.on && tr.ref){ p.x -= tr.off.x/720; p.y -= tr.off.y/720; }   // 基準フレーム座標で保存
+  state.cal.live[state.calMode] = p; store.set("cal", state.cal.live);
+  const i = calKeys.indexOf(state.calMode);
+  const next = calKeys.slice(i+1).find(k => !state.cal.live[k]);
+  if(next) state.calMode = next; else { state.calMode = null; if(calComplete()){ if(tr.on) rebaseTrack(); readNow(); } }
+  updateCalUI();
+});
+$("invert").checked = state.invert;
+$("invert").onchange = e => { state.invert = e.target.checked; store.set("invert", state.invert); };
+
+// ---------- needle detection ----------
+const TAU = Math.PI*2;
+const mod = (a, m) => ((a % m) + m) % m;
+function geometry(c, W){
+  const cx=c.c.x*W, cy=c.c.y*W, zx=c.z.x*W, zy=c.z.y*W, mx=c.m.x*W, my=c.m.y*W;
+  const R = (Math.hypot(zx-cx,zy-cy) + Math.hypot(mx-cx,my-cy))/2;
+  const a0 = Math.atan2(zy-cy, zx-cx);        // canvas: +angle = clockwise
+  const sweep = mod(Math.atan2(my-cy, mx-cx) - a0, TAU) || TAU;
+  return {cx,cy,R,a0,sweep};
+}
+function detect(){
+  const c = cal(); if(!(c.c && c.z && c.m)) return { error:"校正が未完了です" };
+  const W = frame.width;
+  const {cx,cy,R,a0,sweep} = geometry(c, W);
+  if(R < 40) return { error:"目盛の半径が小さすぎます。圧力計を大きく映してください" };
+  const data = fctx.getImageData(0,0,W,W).data;
+  const lum = (x,y) => { const i = ((y|0)*W + (x|0))*4; return 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2]; };
+  const margin = 10*Math.PI/180, step = 0.25*Math.PI/180;
+  const r1 = R*R_IN, r2 = R*R_OUT;
+  const prof = [], angs = [];
+  for(let k=-margin; k<=sweep+margin; k+=step){
+    const a = a0 + k, ca = Math.cos(a), sa = Math.sin(a);
+    let s=0, n=0;
+    for(let r=r1; r<=r2; r+=1){
+      const x = cx + r*ca, y = cy + r*sa;
+      if(x<0||y<0||x>=W||y>=W) continue;
+      const L = lum(x,y); s += state.invert ? L : 255-L; n++;
+    }
+    prof.push(n ? s/n : 0); angs.push(k);
+  }
+  // smooth (window 5)
+  const sm = prof.map((_,i) => { let s=0,n=0; for(let j=-2;j<=2;j++){ const v=prof[i+j]; if(v!==undefined){s+=v;n++;} } return s/n; });
+  let bi = 0; for(let i=1;i<sm.length;i++) if(sm[i]>sm[bi]) bi=i;
+  // sub-step refinement
+  let off = 0;
+  if(bi>0 && bi<sm.length-1){ const y0=sm[bi-1], y1=sm[bi], y2=sm[bi+1], d=y0-2*y1+y2; if(d!==0) off = 0.5*(y0-y2)/d; }
+  const k = angs[bi] + off*step;
+  // confidence: peak over median in robust-sigma units
+  const sorted = [...sm].sort((a,b)=>a-b), med = sorted[sorted.length>>1];
+  const mad = [...sm].map(v=>Math.abs(v-med)).sort((a,b)=>a-b)[sm.length>>1] || 0;
+  const conf = Math.min(99.9, (sm[bi]-med)/(1.4826*Math.max(mad, 1.0)));
+  const value = range.min + Math.max(0, Math.min(1, k/sweep))*span();
+  const outOfScale = k < -2*Math.PI/180 || k > sweep + 2*Math.PI/180;
+  return { value, angleDeg: k*180/Math.PI, conf, outOfScale, absAngle: a0+k, geo:{cx,cy,R} };
+}
+
+// ---------- dial tracking (ZNCC template match, 1 Hz) ----------
+const TS = 240, TK = TS/720;
+const tcv = document.createElement("canvas"); tcv.width = tcv.height = TS;
+const tctx = tcv.getContext("2d", { willReadFrequently: true });
+function demoShift(t){
+  if(!state.track.on) return {x:0, y:0};
+  const u = (t - state.track.t0)/1000;
+  return { x: 34*Math.sin(u/5), y: 22*Math.sin(u/7.7) };
+}
+function smallGray(){
+  tctx.drawImage(frame, 0, 0, TS, TS);
+  const d = tctx.getImageData(0,0,TS,TS).data, g = new Float32Array(TS*TS);
+  for(let i=0,j=0;i<g.length;i++,j+=4) g[i] = 0.299*d[j] + 0.587*d[j+1] + 0.114*d[j+2];
+  return g;
+}
+function captureRef(){
+  const tr = state.track, c = calBase();
+  tr.off = {x:0,y:0}; tr.score = 0; tr.lost = false;
+  if(!(c.c && c.z && c.m)){ tr.ref = null; updateTrackPill(); return; }
+  const g = smallGray(), geo = geometry(c, TS), h = geo.R*1.15, st = 3;
+  const x0 = Math.max(0, Math.round(geo.cx-h)), x1 = Math.min(TS-1, Math.round(geo.cx+h));
+  const y0 = Math.max(0, Math.round(geo.cy-h)), y1 = Math.min(TS-1, Math.round(geo.cy+h));
+  const xs = [], ys = [], vs = [];
+  for(let y=y0; y<=y1; y+=st) for(let x=x0; x<=x1; x+=st){ xs.push(x); ys.push(y); vs.push(g[y*TS+x]); }
+  tr.ref = { xs: Int16Array.from(xs), ys: Int16Array.from(ys), vs: Float32Array.from(vs) };
+  tr.score = 1; updateTrackPill();
+}
+function zncc(g, ref, dx, dy){
+  const N = ref.xs.length; let n=0, sI=0, sII=0, sT=0, sTT=0, sTI=0;
+  for(let i=0;i<N;i++){
+    const x = ref.xs[i]+dx, y = ref.ys[i]+dy;
+    if(x<0 || y<0 || x>=TS || y>=TS) continue;
+    const v = g[y*TS+x], t = ref.vs[i];
+    n++; sI+=v; sII+=v*v; sT+=t; sTT+=t*t; sTI+=t*v;
+  }
+  if(n < N*0.6) return -1;
+  const vI = sII - sI*sI/n, vT = sTT - sT*sT/n;
+  if(vI <= 1e-6 || vT <= 1e-6) return -1;
+  return (sTI - sT*sI/n)/Math.sqrt(vI*vT);
+}
+function searchAround(g, ref, cx, cy, rad, st){
+  let b = {dx:cx, dy:cy, s:-2};
+  for(let dy=cy-rad; dy<=cy+rad; dy+=st) for(let dx=cx-rad; dx<=cx+rad; dx+=st){
+    const s = zncc(g, ref, dx, dy); if(s > b.s) b = {dx, dy, s};
+  }
+  return b;
+}
+function trackUpdate(){
+  const tr = state.track; if(!tr.on || !tr.ref) return;
+  const g = smallGray();
+  let b = searchAround(g, tr.ref, Math.round(tr.off.x*TK), Math.round(tr.off.y*TK), 8, 1);
+  if(b.s < 0.6){ const w = searchAround(g, tr.ref, 0, 0, 40, 2); if(w.s > b.s) b = searchAround(g, tr.ref, w.dx, w.dy, 2, 1); }
+  const par = (a, m, c) => { const d = a - 2*m + c; return (a < -1 || c < -1 || d === 0) ? 0 : Math.max(-0.5, Math.min(0.5, 0.5*(a-c)/d)); };
+  const sx = par(zncc(g,tr.ref,b.dx-1,b.dy), b.s, zncc(g,tr.ref,b.dx+1,b.dy));
+  const sy = par(zncc(g,tr.ref,b.dx,b.dy-1), b.s, zncc(g,tr.ref,b.dx,b.dy+1));
+  tr.off = { x: (b.dx+sx)/TK, y: (b.dy+sy)/TK }; tr.score = b.s; tr.lost = b.s < 0.5;
+  updateTrackPill();
+}
+function rebaseTrack(){
+  // 現在のずれを校正点に織り込み、今のフレームを新しい基準にする
+  const tr = state.track;
+  if(state.src !== "demo" && tr.ref && (tr.off.x || tr.off.y)){
+    const L = state.cal.live, ox = tr.off.x/720, oy = tr.off.y/720;
+    for(const k of calKeys) if(L[k]) L[k] = {x:L[k].x+ox, y:L[k].y+oy};
+    store.set("cal", L);
+  }
+  if(state.src === "demo") tr.t0 = performance.now();
+  grabFrame(performance.now()); captureRef();
+}
+function updateTrackPill(){
+  const tr = state.track, el = $("trackPill");
+  $("trackRef").disabled = !tr.on;
+  if(!tr.on) return setPill(el, "idle", "追従オフ");
+  if(state.src === "img") return setPill(el, "idle", "静止画では追従しません");
+  if(!tr.ref) return setPill(el, "warn", "基準なし・校正してください");
+  if(tr.lost) return setPill(el, "bad", "目盛板を見失いました");
+  setPill(el, "ok", `追従中 Δx ${tr.off.x.toFixed(0)} / Δy ${tr.off.y.toFixed(0)} px`);
+}
+$("trackOn").checked = state.track.on;
+$("trackOn").onchange = e => {
+  const tr = state.track; tr.on = e.target.checked; store.set("track", tr.on);
+  tr.ref = null; tr.off = {x:0,y:0}; tr.lost = false;
+  if(tr.on && calComplete()) rebaseTrack();
+  updateTrackPill();
+};
+$("trackRef").onclick = () => { if(calComplete()) rebaseTrack(); else startCal("c"); };
+setInterval(() => {
+  const tr = state.track;
+  if(!tr.on || !tr.ref || state.src === "img") return;
+  if(grabFrame(performance.now())) trackUpdate();
+}, 1000);
+
+// ---------- reading & logging ----------
+function confClass(r){ if(r.outOfScale || r.conf < CONF_WARN) return "bad"; if(r.conf < CONF_OK) return "warn"; return "ok"; }
+function readNow(){
+  if(!grabFrame(performance.now())){ showSrcMsg("映像がありません。カメラを起動するか画像を読み込んでください。", true); return; }
+  const tr = state.track, tracking = tr.on && !!tr.ref && state.src !== "img";
+  if(tracking) trackUpdate();
+  const r = detect();
+  if(r.error){ showSrcMsg(r.error, true); return; }
+  state.last = r;
+  const entry = { t: new Date().toISOString(), v: +r.value.toFixed(4), a: +r.angleDeg.toFixed(2), c: +r.conf.toFixed(1), f: (confClass(r)!=="ok" || (tracking && tr.lost)) ? 1 : 0, s: state.src };
+  if(tracking){ entry.dx = +tr.off.x.toFixed(1); entry.dy = +tr.off.y.toFixed(1); if(tr.lost) entry.tl = 1; }
+  state.log.push(entry);
+  if(state.log.length > 20000) state.log.splice(0, state.log.length-20000);
+  store.set("log", state.log);
+  renderReadout(entry, r); renderStats(); renderTable(); drawPlot();
+}
+function fmtTime(iso, withDate){
+  const d = new Date(iso), p = n => String(n).padStart(2,"0");
+  const t = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return withDate ? `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${t}` : t;
+}
+function renderReadout(e, r){
+  if(!e){ $("bigVal").innerHTML = "—<small>MPa</small>"; $("mTime").textContent="読取りなし"; $("mAng").textContent="針角度 —"; $("mConf").textContent="信頼度 —"; return; }
+  $("bigVal").firstChild.nodeValue = fv(e.v);
+  $("mTime").textContent = fmtTime(e.t, true);
+  $("mAng").textContent = `針角度 ${e.a.toFixed(1)}°（最小目盛から時計回り）`;
+  const cls = r ? confClass(r) : (e.f ? "warn" : "ok");
+  $("mConf").textContent = `信頼度 ${e.c.toFixed(1)}  ${cls==="ok"?"良好":cls==="warn"?"要確認":"読取り不良"}`;
+  $("mConf").style.color = `var(--${cls})`;
+}
+function renderStats(){
+  const L = state.log; $("sN").textContent = L.length;
+  if(!L.length){ for(const id of ["sMin","sMax","sAvg"]) $(id).textContent="—"; return; }
+  let mn=Infinity, mx=-Infinity, s=0; for(const e of L){ mn=Math.min(mn,e.v); mx=Math.max(mx,e.v); s+=e.v; }
+  $("sMin").textContent = fv(mn); $("sMax").textContent = fv(mx); $("sAvg").textContent = fv(s/L.length);
+}
+function renderTable(){
+  const tb = $("tbody"); tb.textContent = "";
+  const rows = state.log.slice(-200).reverse();
+  for(const e of rows){
+    const tr = document.createElement("tr"); if(e.f) tr.className = "flag";
+    const cells = [fmtTime(e.t, true), fv(e.v), e.a.toFixed(1), e.c.toFixed(1) + (e.f ? " 要確認" : "")];
+    cells.forEach((v,i) => { const td = document.createElement("td"); td.textContent = v; if(i) td.className="num"; tr.appendChild(td); });
+    tb.appendChild(tr);
+  }
+}
+
+// ---------- plot ----------
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function drawPlot(){
+  const cv = $("plot"), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight; if(!w) return;
+  cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  const g = cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,w,h);
+  const padL=44, padR=12, padT=12, padB=26, pw=w-padL-padR, ph=h-padT-padB;
+  const L = state.log;
+  let y0=range.min, y1=range.max;
+  if(state.yAuto && L.length){
+    let mn=Infinity,mx=-Infinity; for(const e of L){mn=Math.min(mn,e.v);mx=Math.max(mx,e.v);}
+    const pad = Math.max(TOL()*1.5, (mx-mn)*0.15); y0=Math.max(range.min,mn-pad); y1=Math.min(range.max,mx+pad);
+  }
+  const yspan = y1-y0, stepCands=[0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1,2,5,10,20,50,100];
+  const ys = stepCands.find(s => yspan/s <= 6) || yspan/5;
+  const Y = v => padT + ph - (v-y0)/yspan*ph;
+  g.font = `11px ${css("--f-num")}`; g.textBaseline="middle"; g.textAlign="right";
+  g.strokeStyle = css("--grid"); g.fillStyle = css("--muted"); g.lineWidth=1;
+  const dec = ys < 0.01 ? 3 : ys < 0.1 ? 2 : ys < 1 ? 1 : 0;
+  for(let v=Math.ceil(y0/ys-1e-9)*ys; v<=y1+1e-9; v+=ys){
+    const y = Math.round(Y(v))+.5; g.beginPath(); g.moveTo(padL,y); g.lineTo(padL+pw,y); g.stroke();
+    g.fillText(v.toFixed(dec), padL-6, y);
+  }
+  if(!L.length){
+    g.textAlign="center"; g.fillText("読取りを行うとここに推移が表示されます", padL+pw/2, padT+ph/2); return;
+  }
+  const t0 = Date.parse(L[0].t), t1 = Math.max(t0+1000, Date.parse(L[L.length-1].t));
+  const X = t => padL + (t-t0)/(t1-t0)*pw;
+  // x labels
+  g.textAlign="center"; g.textBaseline="top";
+  const nx = Math.max(2, Math.min(5, Math.floor(pw/90)));
+  for(let i=0;i<=nx;i++){ const t = t0 + (t1-t0)*i/nx; const d=new Date(t), p=n=>String(n).padStart(2,"0");
+    g.fillText(`${p(d.getHours())}:${p(d.getMinutes())}${(t1-t0)<600000?":"+p(d.getSeconds()):""}`, Math.min(padL+pw-14, Math.max(padL+14, X(t))), padT+ph+7); }
+  g.save(); g.beginPath(); g.rect(padL, padT-5, pw+6, ph+10); g.clip();
+  // area + line
+  const acc = css("--accent");
+  g.beginPath(); L.forEach((e,i) => { const x=X(Date.parse(e.t)), y=Y(e.v); i?g.lineTo(x,y):g.moveTo(x,y); });
+  const lastX = X(Date.parse(L[L.length-1].t));
+  g.save(); g.lineTo(lastX, padT+ph); g.lineTo(X(t0), padT+ph); g.closePath();
+  g.globalAlpha = .12; g.fillStyle = acc; g.fill(); g.restore();
+  g.beginPath(); L.forEach((e,i) => { const x=X(Date.parse(e.t)), y=Y(e.v); i?g.lineTo(x,y):g.moveTo(x,y); });
+  g.strokeStyle = acc; g.lineWidth = 1.8; g.lineJoin="round"; g.stroke();
+  // flagged points
+  g.fillStyle = css("--warn");
+  for(const e of L) if(e.f){ g.beginPath(); g.arc(X(Date.parse(e.t)), Y(e.v), 3, 0, TAU); g.fill(); }
+  // endpoint
+  const le = L[L.length-1]; g.fillStyle = acc; g.beginPath(); g.arc(lastX, Y(le.v), 4, 0, TAU); g.fill();
+  g.restore();
+}
+$("yFull").onclick = () => { state.yAuto=false; $("yFull").setAttribute("aria-pressed","true"); $("yAuto").setAttribute("aria-pressed","false"); drawPlot(); };
+$("yAuto").onclick = () => { state.yAuto=true; $("yAuto").setAttribute("aria-pressed","true"); $("yFull").setAttribute("aria-pressed","false"); drawPlot(); };
+window.addEventListener("resize", drawPlot);
+if(window.matchMedia) matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", drawPlot);
+new MutationObserver(drawPlot).observe(document.documentElement, {attributes:true, attributeFilter:["data-theme"]});
+
+// ---------- scheduler ----------
+function intervalMs(){ const n = Math.max(1, parseFloat($("intv").value)||1); return Math.max(2000, n * (+$("unit").value) * 1000); }
+async function keepAwake(on){
+  try{
+    if(on && "wakeLock" in navigator){ state.wake = await navigator.wakeLock.request("screen"); }
+    else if(!on && state.wake){ await state.wake.release(); state.wake = null; }
+  }catch(e){ state.wake = null; }
+}
+document.addEventListener("visibilitychange", () => { if(document.visibilityState==="visible" && state.running) keepAwake(true); });
+function tick(){
+  if(!state.running) return;
+  const now = Date.now();
+  if(now >= state.nextAt){
+    readNow();
+    const iv = intervalMs();
+    state.nextAt += iv; if(state.nextAt <= now) state.nextAt = now + iv;  // 遅延時は再同期
+  }
+}
+function start(){
+  if(!calComplete()){ showSrcMsg("先に校正（中心・最小目盛・最大目盛の3点）を済ませてください。", true); startCal("c"); return; }
+  state.running = true; state.nextAt = Date.now();
+  state.timer = setInterval(tick, 250); tick();
+  keepAwake(true);
+  $("startBtn").textContent = "監視を停止"; $("startBtn").classList.remove("primary");
+  const iv = intervalMs(); setPill($("runPill"),"ok", `監視中・${iv>=3600000?(iv/3600000)+"時間":iv>=60000?(iv/60000)+"分":(iv/1000)+"秒"}ごと`);
+  store.set("intv", {n:$("intv").value, u:$("unit").value});
+}
+function stopIfRunning(){
+  if(!state.running) return;
+  state.running = false; clearInterval(state.timer); state.timer = null; keepAwake(false);
+  $("startBtn").textContent = "監視を開始"; $("startBtn").classList.add("primary");
+  setPill($("runPill"),"idle","停止中"); $("nextInfo").textContent = "次回読取り：—";
+}
+$("startBtn").onclick = () => state.running ? stopIfRunning() : start();
+$("nowBtn").onclick = readNow;
+const savedIv = store.get("intv", null); if(savedIv){ $("intv").value = savedIv.n; $("unit").value = savedIv.u; }
+
+// ---------- CSV ----------
+function csvText(){
+  const lines = [`日時,圧力[MPa],針角度[deg],信頼度,判定,ソース,追従ずれX[px],追従ずれY[px],レンジ ${fr(range.min)}〜${fr(range.max)} MPa`];
+  for(const e of state.log) lines.push([fmtTime(e.t,true), e.v.toFixed(4), e.a.toFixed(2), e.c.toFixed(1), e.tl?"要確認(追従ロスト)":e.f?"要確認":"良好", {cam:"カメラ",img:"画像",demo:"デモ"}[e.s]||e.s, e.dx ?? "", e.dy ?? ""].join(","));
+  return "﻿" + lines.join("\r\n") + "\r\n";
+}
+function csvName(){ const d=new Date(), p=n=>String(n).padStart(2,"0"); return `gauge_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`; }
+function csvNote(t){ const m=$("csvMsg"); m.textContent=t; m.hidden=!t; }
+let downloadsApi; // undefined = not yet known
+if(window.claude && typeof window.claude.use === "function"){
+  window.claude.use("downloads").then(d => { downloadsApi = d; }).catch(() => { downloadsApi = null; });
+} else downloadsApi = null;
+$("csvBtn").onclick = async () => {
+  if(!state.log.length){ csvNote("ログがまだありません。"); return; }
+  const text = csvText(), name = csvName();
+  if(downloadsApi){
+    try{ await downloadsApi.save({ filename:name, data:text }); csvNote(`${name} を保存しました。`); }
+    catch(e){ csvNote(e && e.code==="declined" ? "保存を取りやめました。" : "この画面ではファイル保存ができません。「CSVをコピー」を使ってください。"); }
+    return;
+  }
+  if(window.claude){ csvNote("この画面ではファイル保存ができません。「CSVをコピー」を使ってください。"); return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type:"text/csv"})); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+  csvNote(`${name} を保存しました。`);
+};
+$("copyBtn").onclick = () => {
+  if(!state.log.length){ csvNote("ログがまだありません。"); return; }
+  const text = csvText().slice(1);
+  const fallback = () => {
+    const ta = document.createElement("textarea"); ta.value = text; ta.style.width="100%"; ta.rows=6;
+    const m=$("csvMsg"); m.hidden=false; m.textContent="自動コピーできなかったため、下の内容を選択してコピーしてください。"; m.appendChild(ta); ta.focus(); ta.select();
+  };
+  try{ navigator.clipboard.writeText(text).then(()=>csvNote(`${state.log.length} 件をクリップボードにコピーしました。`), fallback); }catch(e){ fallback(); }
+};
+$("clearBtn").onclick = () => { $("clearN").textContent = state.log.length; $("clearConfirm").hidden = false; };
+$("clearNo").onclick = () => { $("clearConfirm").hidden = true; };
+$("clearYes").onclick = () => { state.log = []; store.set("log", []); state.last=null; $("clearConfirm").hidden = true; renderReadout(null); renderStats(); renderTable(); drawPlot(); csvNote("ログを消去しました。"); };
+
+// ---------- render loop (preview + overlay) ----------
+function overlay(t){
+  vctx.drawImage(frame, 0, 0, view.width, view.height);
+  const W = view.width, c = cal();
+  const colN = css("--needle") || "#d9480f";
+  // calibration marks
+  const mark = (p, label) => { if(!p) return; const x=p.x*W, y=p.y*W;
+    vctx.strokeStyle="#fff"; vctx.lineWidth=3; vctx.beginPath(); vctx.arc(x,y,9,0,TAU); vctx.stroke();
+    vctx.strokeStyle=colN; vctx.lineWidth=2; vctx.beginPath(); vctx.arc(x,y,9,0,TAU); vctx.moveTo(x-14,y); vctx.lineTo(x+14,y); vctx.moveTo(x,y-14); vctx.lineTo(x,y+14); vctx.stroke();
+    vctx.font="600 15px "+css("--f-num"); vctx.fillStyle="#fff"; vctx.strokeStyle="rgba(0,0,0,.7)"; vctx.lineWidth=3; vctx.strokeText(label,x+13,y-12); vctx.fillText(label,x+13,y-12); };
+  if(c.c && c.z && c.m){
+    const g = geometry(c, W);
+    // search band + scale arc
+    vctx.save(); vctx.setLineDash([5,6]); vctx.strokeStyle="rgba(79,179,209,.85)"; vctx.lineWidth=1.5;
+    vctx.beginPath(); vctx.arc(g.cx,g.cy,g.R*R_IN,g.a0,g.a0+g.sweep); vctx.stroke();
+    vctx.beginPath(); vctx.arc(g.cx,g.cy,g.R*R_OUT,g.a0,g.a0+g.sweep); vctx.stroke();
+    vctx.setLineDash([]); vctx.strokeStyle="rgba(79,179,209,.5)"; vctx.lineWidth=2;
+    vctx.beginPath(); vctx.arc(g.cx,g.cy,g.R,g.a0,g.a0+g.sweep); vctx.stroke(); vctx.restore();
+  }
+  mark(c.c,"中心"); mark(c.z,fr(range.min)); mark(c.m,fr(range.max));
+  // last detected needle
+  if(state.last && state.last.geo){
+    const r = state.last, s = W/frame.width, g = r.geo;
+    vctx.strokeStyle = colN; vctx.lineWidth = 3; vctx.lineCap="round";
+    vctx.beginPath(); vctx.moveTo(g.cx*s, g.cy*s); vctx.lineTo((g.cx+g.R*1.02*Math.cos(r.absAngle))*s, (g.cy+g.R*1.02*Math.sin(r.absAngle))*s); vctx.stroke();
+    const txt = fv(r.value)+" MPa";
+    vctx.font = "600 22px "+css("--f-num"); vctx.lineWidth=4; vctx.strokeStyle="rgba(0,0,0,.75)"; vctx.fillStyle="#fff";
+    vctx.strokeText(txt, 14, 32); vctx.fillText(txt, 14, 32);
+  }
+}
+function loop(t){
+  grabFrame(t);
+  overlay(t);
+  if(state.running){
+    const s = Math.max(0, Math.ceil((state.nextAt - Date.now())/1000));
+    $("nextInfo").textContent = `次回読取り：${fmtTime(new Date(state.nextAt).toISOString())}（あと ${s>=60? Math.floor(s/60)+"分"+(s%60)+"秒" : s+"秒"}）`;
+  }
+  requestAnimationFrame(loop);
+}
+
+// ---------- range UI ----------
+function renderRange(){
+  $("rMin").value = fr(range.min); $("rMax").value = fr(range.max);
+  $("spec").textContent = `ブルドン管圧力計 φ100 / ${CLASS}級 / ${fr(range.min)}〜${fr(range.max)} MPa / 許容差 ±${+TOL().toFixed(4)} MPa`;
+  $("tolNote").textContent = `許容差 ±${+TOL().toFixed(4)} MPa（スパンの${CLASS}%）`;
+  updateCalUI();
+}
+function applyRange(){
+  const mn = parseFloat($("rMin").value), mx = parseFloat($("rMax").value), m = $("rMsg");
+  if(!isFinite(mn) || !isFinite(mx)){ m.textContent = "最小値と最大値に数値を入力してください。"; m.hidden = false; return; }
+  if(mx <= mn){ m.textContent = "最大値は最小値より大きくしてください。"; m.hidden = false; return; }
+  m.hidden = true;
+  if(mn === range.min && mx === range.max) return;
+  range.min = mn; range.max = mx; store.set("range", range);
+  state.last = null;
+  renderRange(); renderStats(); renderTable(); drawPlot();
+  if(state.log.length) csvNote("レンジを変更しました。これ以降の読取りに新しいレンジが使われます（記録済みの値はそのままです）。");
+}
+$("rMin").addEventListener("change", applyRange);
+$("rMax").addEventListener("change", applyRange);
+renderRange();
+
+// ---------- boot ----------
+updateCalUI(); renderStats(); renderTable();
+const lastE = state.log[state.log.length-1]; renderReadout(lastE || null);
+requestAnimationFrame(loop);
+// デモ：初回はサンプル読取りを数点入れて動作を見せる（ソース=デモとして記録）
+if(!state.log.length){
+  const now = Date.now();
+  for(let i=11;i>=0;i--){
+    const t = now - i*60000; drawDemo(fctx, frame.width, t - now + performance.now() - i*60000);
+    const r = detect();
+    state.log.push({ t:new Date(t).toISOString(), v:+r.value.toFixed(4), a:+r.angleDeg.toFixed(2), c:+r.conf.toFixed(1), f: confClass(r)!=="ok"?1:0, s:"demo" });
+  }
+  state.last = null; renderStats(); renderTable(); renderReadout(state.log[state.log.length-1]);
+}
+if(state.track.on) rebaseTrack(); updateTrackPill();
+setTimeout(drawPlot, 50);
+if(document.fonts && document.fonts.ready) document.fonts.ready.then(drawPlot);
+})();
+</script>
+
+<script>if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));}</script>
+</body></html>
