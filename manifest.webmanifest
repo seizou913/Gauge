@@ -1,0 +1,17 @@
+{
+  "name": "圧力計ウォッチ",
+  "short_name": "圧力計ウォッチ",
+  "description": "アナログ圧力計を定時間ごとに撮影して読み取り、CSVとグラフに記録します",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#e9edf0",
+  "theme_color": "#0f6a86",
+  "lang": "ja",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}
