@@ -82,6 +82,8 @@ tr.flag td{color:var(--warn)}
 .range label{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--muted)}
 .range .inp{display:flex;align-items:center;gap:6px;color:var(--ink)}
 .range input{width:100%;min-width:0}
+.actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.actions button{width:100%;padding-inline:6px}
 details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -134,9 +136,15 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <label class="row" style="gap:6px"><input id="invert" type="checkbox"> 針が文字板より明るい</label>
         <button id="calReset">校正をやり直す</button>
       </div>
+      <div class="row">
+        <label class="row" style="gap:6px"><input id="trackOn" type="checkbox"> 目盛板を追従（1秒ごと）</label>
+        <button id="trackRef">追従の基準を取り直す</button>
+        <span id="trackPill" class="pill idle">追従オフ</span>
+      </div>
       <details>
         <summary>設置と読取りのコツ</summary>
         <p class="note">スマホを圧力計の正面に固定し、文字板が画面いっぱいに映るようにします。斜めから撮ると角度が歪み誤差になります。針の影や照明の映り込みも誤読の原因になるので、拡散光で照らしてください。読取りは中心から目盛半径の 22〜52% の帯で最も暗い放射線を探す方式です。信頼度が低い回は「要確認」として記録されます。</p>
+        <p class="note">「目盛板を追従」をオンにすると、校正した時点の文字板の見え方を基準に、1秒ごとに画面内での位置ずれを探して校正点を自動で動かします。スマホのずれや振動による平行移動には追従しますが、大きな回転・傾き・ズーム変化には追従できません。見失った回は「要確認」として記録されます。</p>
       </details>
     </section>
 
@@ -161,6 +169,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <select id="unit" aria-label="間隔の単位"><option value="1">秒</option><option value="60" selected>分</option><option value="3600">時間</option></select>
         <button id="startBtn" class="primary">監視を開始</button>
         <button id="nowBtn">今すぐ読取り</button>
+        <button id="camBtn" class="danger" hidden>カメラ停止</button>
       </div>
       <div class="note" id="nextInfo">次回読取り：—</div>
 
@@ -180,13 +189,11 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
       </div>
       <canvas id="plot" class="plot" aria-label="圧力の推移グラフ"></canvas>
 
-      <div class="row" style="justify-content:space-between">
-        <h2>ログ</h2>
-        <div class="row">
-          <button id="csvBtn">CSVを保存</button>
-          <button id="copyBtn">CSVをコピー</button>
-          <button id="clearBtn" class="danger">消去</button>
-        </div>
+      <h2>ログ</h2>
+      <div class="actions">
+        <button id="csvBtn">CSVを保存</button>
+        <button id="copyBtn">CSVをコピー</button>
+        <button id="clearBtn" class="danger">消去</button>
       </div>
       <div id="clearConfirm" class="msg" hidden>
         ログ <b id="clearN">0</b> 件を消去します。
@@ -245,9 +252,16 @@ const state = {
   running: false, timer: null, nextAt: 0,
   last: null, yAuto: false,
   video: null, stream: null, img: null,
-  wake: null
+  wake: null,
+  track: { on: store.get("track", false), ref: null, off: {x:0,y:0}, score: 0, lost: false, t0: 0 }
 };
-const cal = () => state.src === "demo" ? state.cal.demo : state.cal.live;
+const calBase = () => state.src === "demo" ? state.cal.demo : state.cal.live;
+function cal(){
+  const b = calBase(), tr = state.track;
+  if(!tr.on || !tr.ref) return b;
+  const ox = tr.off.x/720, oy = tr.off.y/720, sh = p => p ? {x:p.x+ox, y:p.y+oy} : null;
+  return { c: sh(b.c), z: sh(b.z), m: sh(b.m) };
+}
 
 // ---------- demo gauge ----------
 let demoV = 0.92;
@@ -306,13 +320,20 @@ function drawDemo(ctx, W, t){
 // ---------- source handling ----------
 function setSrcButtons(){
   for(const [id,k] of [["srcCam","cam"],["srcImg","img"],["srcDemo","demo"]]) $(id).setAttribute("aria-pressed", String(state.src===k));
+  updateCamBtn();
 }
 function showSrcMsg(text, err){ const m=$("srcMsg"); m.textContent=text; m.className="msg"+(err?" err":""); m.hidden=!text; }
 function setPill(el, cls, text){ el.className = "pill "+cls; el.textContent = text; }
 
 function stopCamera(){
   if(state.stream){ state.stream.getTracks().forEach(t=>t.stop()); state.stream=null; }
-  state.video = null;
+  state.video = null; updateCamBtn();
+}
+function updateCamBtn(){
+  const b = $("camBtn"); if(!b) return;
+  b.hidden = state.src !== "cam";
+  b.textContent = state.stream ? "カメラ停止" : "カメラ起動";
+  b.classList.toggle("danger", !!state.stream);
 }
 async function useCamera(){
   stopIfRunning();
@@ -328,11 +349,13 @@ async function useCamera(){
     const v = document.createElement("video"); v.playsInline = true; v.muted = true; v.srcObject = s;
     await v.play();
     state.stream = s; state.video = v;
-    setPill($("srcPill"),"ok","カメラ稼働");
+    setPill($("srcPill"),"ok","カメラ稼働"); updateCamBtn();
+    state.track.ref = null; updateTrackPill();
+    if(state.track.on && calComplete()) setTimeout(() => { if(state.src === "cam") rebaseTrack(); }, 800);
     if(!calComplete()) startCal("c");
   }catch(e){
     setPill($("srcPill"),"bad","カメラ不可");
-    showSrcMsg("カメラを起動できませんでした（"+(e && e.name || "エラー")+"）。claude.ai 上のプレビューではカメラが使えないため、配布用HTMLをHTTPSで開くか「画像」で写真を読み込んでください。", true);
+    showSrcMsg("カメラを起動できませんでした（"+(e && e.name || "エラー")+"）。claude.ai 上ではカメラを使えません。リアルタイム監視には配布版（gauge-watch-pwa.zip）をHTTPSで公開し、スマホのホーム画面に追加して使ってください。すぐに試すだけなら「画像」で写真を読み込めます。", true);
   }
 }
 function useImage(){ $("fileIn").click(); }
@@ -342,7 +365,7 @@ $("fileIn").addEventListener("change", e => {
   const im = new Image();
   im.onload = () => {
     stopIfRunning(); stopCamera();
-    state.img = im; state.src = "img"; setSrcButtons(); state.last = null;
+    state.img = im; state.src = "img"; setSrcButtons(); state.last = null; state.track.ref = null; updateTrackPill();
     setPill($("srcPill"),"ok","静止画像"); showSrcMsg("");
     if(!calComplete()) startCal("c"); else readNow();
   };
@@ -353,13 +376,25 @@ $("fileIn").addEventListener("change", e => {
 function useDemo(){
   stopCamera(); state.src = "demo"; setSrcButtons(); state.last = null;
   setPill($("srcPill"),"idle","デモ映像"); showSrcMsg(""); endCal();
+  state.track.ref = null; if(state.track.on) rebaseTrack(); updateTrackPill();
 }
-$("srcCam").onclick = useCamera; $("srcImg").onclick = useImage; $("srcDemo").onclick = useDemo;
+$("srcCam").onclick = () => { if(!state.stream) useCamera(); };
+$("camBtn").onclick = () => {
+  if(state.stream){
+    stopIfRunning(); stopCamera(); state.track.ref = null; updateTrackPill();
+    setPill($("srcPill"),"idle","カメラ停止中"); showSrcMsg("カメラを停止しました。再開するときは「カメラ起動」を押してください。");
+  } else useCamera();
+}; $("srcImg").onclick = useImage; $("srcDemo").onclick = useDemo;
 
 // draw current source into the square analysis frame (center-crop)
 function grabFrame(t){
   const W = frame.width;
-  if(state.src === "demo"){ drawDemo(fctx, W, t); return true; }
+  if(state.src === "demo"){
+    const sh = demoShift(t);
+    fctx.fillStyle = "#3b4247"; fctx.fillRect(0,0,W,W);
+    fctx.save(); fctx.translate(sh.x, sh.y); drawDemo(fctx, W, t); fctx.restore();
+    return true;
+  }
   let el = null, w = 0, h = 0;
   if(state.src === "cam" && state.video && state.video.videoWidth){ el = state.video; w = el.videoWidth; h = el.videoHeight; }
   else if(state.src === "img" && state.img){ el = state.img; w = el.naturalWidth; h = el.naturalHeight; }
@@ -401,10 +436,12 @@ view.addEventListener("pointerdown", e => {
   if(!state.calMode) return;
   const r = view.getBoundingClientRect();
   const p = { x: (e.clientX - r.left)/r.width, y: (e.clientY - r.top)/r.height };
+  const tr = state.track;
+  if(tr.on && tr.ref){ p.x -= tr.off.x/720; p.y -= tr.off.y/720; }   // 基準フレーム座標で保存
   state.cal.live[state.calMode] = p; store.set("cal", state.cal.live);
   const i = calKeys.indexOf(state.calMode);
   const next = calKeys.slice(i+1).find(k => !state.cal.live[k]);
-  if(next) state.calMode = next; else { state.calMode = null; if(calComplete()) readNow(); }
+  if(next) state.calMode = next; else { state.calMode = null; if(calComplete()){ if(tr.on) rebaseTrack(); readNow(); } }
   updateCalUI();
 });
 $("invert").checked = state.invert;
@@ -456,14 +493,109 @@ function detect(){
   return { value, angleDeg: k*180/Math.PI, conf, outOfScale, absAngle: a0+k, geo:{cx,cy,R} };
 }
 
+// ---------- dial tracking (ZNCC template match, 1 Hz) ----------
+const TS = 240, TK = TS/720;
+const tcv = document.createElement("canvas"); tcv.width = tcv.height = TS;
+const tctx = tcv.getContext("2d", { willReadFrequently: true });
+function demoShift(t){
+  if(!state.track.on) return {x:0, y:0};
+  const u = (t - state.track.t0)/1000;
+  return { x: 34*Math.sin(u/5), y: 22*Math.sin(u/7.7) };
+}
+function smallGray(){
+  tctx.drawImage(frame, 0, 0, TS, TS);
+  const d = tctx.getImageData(0,0,TS,TS).data, g = new Float32Array(TS*TS);
+  for(let i=0,j=0;i<g.length;i++,j+=4) g[i] = 0.299*d[j] + 0.587*d[j+1] + 0.114*d[j+2];
+  return g;
+}
+function captureRef(){
+  const tr = state.track, c = calBase();
+  tr.off = {x:0,y:0}; tr.score = 0; tr.lost = false;
+  if(!(c.c && c.z && c.m)){ tr.ref = null; updateTrackPill(); return; }
+  const g = smallGray(), geo = geometry(c, TS), h = geo.R*1.15, st = 3;
+  const x0 = Math.max(0, Math.round(geo.cx-h)), x1 = Math.min(TS-1, Math.round(geo.cx+h));
+  const y0 = Math.max(0, Math.round(geo.cy-h)), y1 = Math.min(TS-1, Math.round(geo.cy+h));
+  const xs = [], ys = [], vs = [];
+  for(let y=y0; y<=y1; y+=st) for(let x=x0; x<=x1; x+=st){ xs.push(x); ys.push(y); vs.push(g[y*TS+x]); }
+  tr.ref = { xs: Int16Array.from(xs), ys: Int16Array.from(ys), vs: Float32Array.from(vs) };
+  tr.score = 1; updateTrackPill();
+}
+function zncc(g, ref, dx, dy){
+  const N = ref.xs.length; let n=0, sI=0, sII=0, sT=0, sTT=0, sTI=0;
+  for(let i=0;i<N;i++){
+    const x = ref.xs[i]+dx, y = ref.ys[i]+dy;
+    if(x<0 || y<0 || x>=TS || y>=TS) continue;
+    const v = g[y*TS+x], t = ref.vs[i];
+    n++; sI+=v; sII+=v*v; sT+=t; sTT+=t*t; sTI+=t*v;
+  }
+  if(n < N*0.6) return -1;
+  const vI = sII - sI*sI/n, vT = sTT - sT*sT/n;
+  if(vI <= 1e-6 || vT <= 1e-6) return -1;
+  return (sTI - sT*sI/n)/Math.sqrt(vI*vT);
+}
+function searchAround(g, ref, cx, cy, rad, st){
+  let b = {dx:cx, dy:cy, s:-2};
+  for(let dy=cy-rad; dy<=cy+rad; dy+=st) for(let dx=cx-rad; dx<=cx+rad; dx+=st){
+    const s = zncc(g, ref, dx, dy); if(s > b.s) b = {dx, dy, s};
+  }
+  return b;
+}
+function trackUpdate(){
+  const tr = state.track; if(!tr.on || !tr.ref) return;
+  const g = smallGray();
+  let b = searchAround(g, tr.ref, Math.round(tr.off.x*TK), Math.round(tr.off.y*TK), 8, 1);
+  if(b.s < 0.6){ const w = searchAround(g, tr.ref, 0, 0, 40, 2); if(w.s > b.s) b = searchAround(g, tr.ref, w.dx, w.dy, 2, 1); }
+  const par = (a, m, c) => { const d = a - 2*m + c; return (a < -1 || c < -1 || d === 0) ? 0 : Math.max(-0.5, Math.min(0.5, 0.5*(a-c)/d)); };
+  const sx = par(zncc(g,tr.ref,b.dx-1,b.dy), b.s, zncc(g,tr.ref,b.dx+1,b.dy));
+  const sy = par(zncc(g,tr.ref,b.dx,b.dy-1), b.s, zncc(g,tr.ref,b.dx,b.dy+1));
+  tr.off = { x: (b.dx+sx)/TK, y: (b.dy+sy)/TK }; tr.score = b.s; tr.lost = b.s < 0.5;
+  updateTrackPill();
+}
+function rebaseTrack(){
+  // 現在のずれを校正点に織り込み、今のフレームを新しい基準にする
+  const tr = state.track;
+  if(state.src !== "demo" && tr.ref && (tr.off.x || tr.off.y)){
+    const L = state.cal.live, ox = tr.off.x/720, oy = tr.off.y/720;
+    for(const k of calKeys) if(L[k]) L[k] = {x:L[k].x+ox, y:L[k].y+oy};
+    store.set("cal", L);
+  }
+  if(state.src === "demo") tr.t0 = performance.now();
+  grabFrame(performance.now()); captureRef();
+}
+function updateTrackPill(){
+  const tr = state.track, el = $("trackPill");
+  $("trackRef").disabled = !tr.on;
+  if(!tr.on) return setPill(el, "idle", "追従オフ");
+  if(state.src === "img") return setPill(el, "idle", "静止画では追従しません");
+  if(!tr.ref) return setPill(el, "warn", "基準なし・校正してください");
+  if(tr.lost) return setPill(el, "bad", "目盛板を見失いました");
+  setPill(el, "ok", `追従中 Δx ${tr.off.x.toFixed(0)} / Δy ${tr.off.y.toFixed(0)} px`);
+}
+$("trackOn").checked = state.track.on;
+$("trackOn").onchange = e => {
+  const tr = state.track; tr.on = e.target.checked; store.set("track", tr.on);
+  tr.ref = null; tr.off = {x:0,y:0}; tr.lost = false;
+  if(tr.on && calComplete()) rebaseTrack();
+  updateTrackPill();
+};
+$("trackRef").onclick = () => { if(calComplete()) rebaseTrack(); else startCal("c"); };
+setInterval(() => {
+  const tr = state.track;
+  if(!tr.on || !tr.ref || state.src === "img") return;
+  if(grabFrame(performance.now())) trackUpdate();
+}, 1000);
+
 // ---------- reading & logging ----------
 function confClass(r){ if(r.outOfScale || r.conf < CONF_WARN) return "bad"; if(r.conf < CONF_OK) return "warn"; return "ok"; }
 function readNow(){
   if(!grabFrame(performance.now())){ showSrcMsg("映像がありません。カメラを起動するか画像を読み込んでください。", true); return; }
+  const tr = state.track, tracking = tr.on && !!tr.ref && state.src !== "img";
+  if(tracking) trackUpdate();
   const r = detect();
   if(r.error){ showSrcMsg(r.error, true); return; }
   state.last = r;
-  const entry = { t: new Date().toISOString(), v: +r.value.toFixed(4), a: +r.angleDeg.toFixed(2), c: +r.conf.toFixed(1), f: confClass(r)!=="ok" ? 1 : 0, s: state.src };
+  const entry = { t: new Date().toISOString(), v: +r.value.toFixed(4), a: +r.angleDeg.toFixed(2), c: +r.conf.toFixed(1), f: (confClass(r)!=="ok" || (tracking && tr.lost)) ? 1 : 0, s: state.src };
+  if(tracking){ entry.dx = +tr.off.x.toFixed(1); entry.dy = +tr.off.y.toFixed(1); if(tr.lost) entry.tl = 1; }
   state.log.push(entry);
   if(state.log.length > 20000) state.log.splice(0, state.log.length-20000);
   store.set("log", state.log);
@@ -596,8 +728,8 @@ const savedIv = store.get("intv", null); if(savedIv){ $("intv").value = savedIv.
 
 // ---------- CSV ----------
 function csvText(){
-  const lines = [`日時,圧力[MPa],針角度[deg],信頼度,判定,ソース,レンジ ${fr(range.min)}〜${fr(range.max)} MPa`];
-  for(const e of state.log) lines.push([fmtTime(e.t,true), e.v.toFixed(4), e.a.toFixed(2), e.c.toFixed(1), e.f?"要確認":"良好", {cam:"カメラ",img:"画像",demo:"デモ"}[e.s]||e.s].join(","));
+  const lines = [`日時,圧力[MPa],針角度[deg],信頼度,判定,ソース,追従ずれX[px],追従ずれY[px],レンジ ${fr(range.min)}〜${fr(range.max)} MPa`];
+  for(const e of state.log) lines.push([fmtTime(e.t,true), e.v.toFixed(4), e.a.toFixed(2), e.c.toFixed(1), e.tl?"要確認(追従ロスト)":e.f?"要確認":"良好", {cam:"カメラ",img:"画像",demo:"デモ"}[e.s]||e.s, e.dx ?? "", e.dy ?? ""].join(","));
   return "﻿" + lines.join("\r\n") + "\r\n";
 }
 function csvName(){ const d=new Date(), p=n=>String(n).padStart(2,"0"); return `gauge_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`; }
@@ -651,6 +783,10 @@ function overlay(t){
     vctx.beginPath(); vctx.arc(g.cx,g.cy,g.R*R_OUT,g.a0,g.a0+g.sweep); vctx.stroke();
     vctx.setLineDash([]); vctx.strokeStyle="rgba(79,179,209,.5)"; vctx.lineWidth=2;
     vctx.beginPath(); vctx.arc(g.cx,g.cy,g.R,g.a0,g.a0+g.sweep); vctx.stroke(); vctx.restore();
+  }
+  if(state.src === "cam" && !state.video){
+    vctx.fillStyle = "rgba(255,255,255,.8)"; vctx.font = "500 26px "+css("--f-body"); vctx.textAlign = "center";
+    vctx.fillText("カメラ停止中", W/2, W/2); vctx.textAlign = "start";
   }
   mark(c.c,"中心"); mark(c.z,fr(range.min)); mark(c.m,fr(range.max));
   // last detected needle
@@ -709,6 +845,7 @@ if(!state.log.length){
   }
   state.last = null; renderStats(); renderTable(); renderReadout(state.log[state.log.length-1]);
 }
+if(state.track.on) rebaseTrack(); updateTrackPill();
 setTimeout(drawPlot, 50);
 if(document.fonts && document.fonts.ready) document.fonts.ready.then(drawPlot);
 })();
