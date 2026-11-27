@@ -99,7 +99,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
   <header>
     <h1>圧力計ウォッチ</h1>
     <span class="spec" id="spec">ブルドン管圧力計 φ100 / 1.6級</span>
-    <span class="spec">版 v8（11/27 再校正対応）</span>
+    <span class="spec">版 v9（11/27 再校正ボタン移動）</span>
   </header>
 
   <div class="grid">
@@ -149,6 +149,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
       <div id="needleInfo" class="note" hidden></div>
       <div class="row">
         <label class="row" style="gap:6px"><input id="invert" type="checkbox"> 針が文字板より明るい</label>
+        <button id="recalBtn" class="primary">再校正</button>
         <button id="calReset">校正を消去して最初から</button>
       </div>
       <div class="row">
@@ -187,7 +188,6 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <button id="startBtn" class="primary">監視を開始</button>
         <button id="nowBtn">今すぐ読取り</button>
         <button id="camBtn" class="danger" hidden>カメラ停止</button>
-        <button id="recalBtn">再校正</button>
       </div>
       <div class="note" id="nextInfo">次回読取り：—</div>
 
@@ -444,7 +444,7 @@ function endCal(){ state.calMode = null; updateCalUI(); }
 function updateRecalBtn(){
   const b = $("recalBtn");
   b.textContent = state.recal ? "再校正を中止" : "再校正";
-  b.classList.toggle("danger", !!state.recal);
+  b.classList.toggle("danger", !!state.recal); b.classList.toggle("primary", !state.recal);
   b.disabled = state.src === "demo" && !state.recal;
   b.title = state.src === "demo" ? "デモは校正済みです" : "";
 }
