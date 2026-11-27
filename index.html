@@ -148,7 +148,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
       <div id="needleInfo" class="note" hidden></div>
       <div class="row">
         <label class="row" style="gap:6px"><input id="invert" type="checkbox"> 針が文字板より明るい</label>
-        <button id="calReset">校正をやり直す</button>
+        <button id="calReset">校正を消去して最初から</button>
       </div>
       <div class="row">
         <label class="row" style="gap:6px"><input id="trackOn" type="checkbox"> 目盛板を追従（1秒ごと）</label>
@@ -186,6 +186,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
         <button id="startBtn" class="primary">監視を開始</button>
         <button id="nowBtn">今すぐ読取り</button>
         <button id="camBtn" class="danger" hidden>カメラ停止</button>
+        <button id="recalBtn">再校正</button>
       </div>
       <div class="note" id="nextInfo">次回読取り：—</div>
 
@@ -336,7 +337,7 @@ function drawDemo(ctx, W, t){
 // ---------- source handling ----------
 function setSrcButtons(){
   for(const [id,k] of [["srcCam","cam"],["srcImg","img"],["srcDemo","demo"]]) $(id).setAttribute("aria-pressed", String(state.src===k));
-  updateCamBtn();
+  updateCamBtn(); if($("recalBtn")) updateRecalBtn();
 }
 function showSrcMsg(text, err){ const m=$("srcMsg"); m.textContent=text; m.className="msg"+(err?" err":""); m.hidden=!text; }
 function setPill(el, cls, text){ el.className = "pill "+cls; el.textContent = text; }
@@ -390,13 +391,16 @@ $("fileIn").addEventListener("change", e => {
   e.target.value = "";
 });
 function useDemo(){
+  if(state.recal) cancelRecal();
   stopCamera(); state.src = "demo"; setSrcButtons(); state.last = null;
   setPill($("srcPill"),"idle","デモ映像"); showSrcMsg(""); endCal();
   state.track.ref = null; if(state.track.on) rebaseTrack(); updateTrackPill();
 }
 $("srcCam").onclick = () => { if(!state.stream) useCamera(); };
+$("recalBtn").onclick = () => state.recal ? cancelRecal() : beginRecal();
 $("camBtn").onclick = () => {
   if(state.stream){
+    if(state.recal) cancelRecal();
     stopIfRunning(); stopCamera(); state.track.ref = null; updateTrackPill();
     setPill($("srcPill"),"idle","カメラ停止中"); showSrcMsg("カメラを停止しました。再開するときは「カメラ起動」を押してください。");
   } else useCamera();
@@ -425,11 +429,54 @@ const calKeys = ["c","z","m","t"];
 function calComplete(){ const c = cal(); return !!(c.c && c.z && c.m); }
 function startCal(k){
   if(state.src === "demo"){ showSrcMsg("デモは校正済みです。カメラか画像に切り替えると校正できます。"); return; }
+  if(state.recal && state.calMode === k){                 // 再校正中：もう一度押すとその点はそのまま（スキップ）
+    const nk = calKeys[calKeys.indexOf(k)+1];
+    if(nk){ state.calMode = nk; updateCalUI(); } else finishRecal();
+    return;
+  }
   if(state.calMode === k){ endCal(); return; }          // もう一度押すと取り消し（④の省略にも使う）
   setSetupOpen(true);
   state.calMode = k; updateCalUI();
 }
 function endCal(){ state.calMode = null; updateCalUI(); }
+// ---------- 再校正 ----------
+function updateRecalBtn(){
+  const b = $("recalBtn");
+  b.textContent = state.recal ? "再校正を中止" : "再校正";
+  b.classList.toggle("danger", !!state.recal);
+  b.disabled = state.src === "demo" && !state.recal;
+  b.title = state.src === "demo" ? "デモは校正済みです" : "";
+}
+function beginRecal(){
+  if(state.src === "demo"){ showSrcMsg("デモは校正済みです。カメラか画像に切り替えると再校正できます。"); return; }
+  if(state.src === "cam" && !state.video){ showSrcMsg("カメラが停止しています。「カメラ起動」を押してから再校正してください。", true); return; }
+  state.recal = { prev: JSON.parse(JSON.stringify(state.cal.live)), wasRunning: state.running };
+  stopIfRunning();
+  setSetupOpen(true);
+  state.calMode = "c";
+  showSrcMsg("再校正中：①中心 → ②最小目盛 → ③最大目盛 → ④針の先端 の順にタップします。今の校正点は打ち直すまで残ります。");
+  updateRecalBtn(); updateCalUI();
+}
+function finishRecal(){
+  const rc = state.recal; if(!rc) return;
+  state.recal = null; state.calMode = null; updateRecalBtn();
+  if(!calComplete()){ showSrcMsg("校正点が足りません。①〜③を設定してください。", true); updateCalUI(); return; }
+  if(state.track.on) rebaseTrack();
+  state.nextNote = "再校正後";
+  showSrcMsg(rc.wasRunning ? "再校正しました。監視を再開します。" : "再校正しました。確認のため1回読み取りました。");
+  updateCalUI();
+  if(rc.wasRunning) start(); else readNow();
+}
+function cancelRecal(){
+  const rc = state.recal; if(!rc) return;
+  state.recal = null; state.calMode = null;
+  state.cal.live = rc.prev; store.set("cal", state.cal.live);
+  $("needleInfo").hidden = true;
+  if(state.track.on) rebaseTrack();
+  showSrcMsg(rc.wasRunning ? "再校正を中止し、元の校正に戻して監視を再開しました。" : "再校正を中止し、元の校正に戻しました。");
+  updateRecalBtn(); updateCalUI();
+  if(rc.wasRunning) start();
+}
 function updateCalUI(){
   const c = cal();
   const names = {c:"① 中心", z:`② 最小目盛（${fr(range.min)}）`, m:`③ 最大目盛（${fr(range.max)}）`, t:"④ 針の先端"};
@@ -445,7 +492,8 @@ function updateCalUI(){
   const h = $("hint");
   if(state.calMode){
     const tips = { c:"針の軸（中心キャップ）の中央をタップ", z:`${fr(range.min)} の目盛線の外端をタップ`, m:`${fr(range.max)} の目盛線の外端をタップ`, t:"指示針の先端をタップ（省略するときは ④ をもう一度押す）" };
-    h.textContent = names[state.calMode] + "：" + tips[state.calMode]; h.hidden = false;
+    const skip = state.recal ? `（変えない点はボタンをもう一度押してスキップ）` : "";
+    h.textContent = (state.recal ? `再校正 ${calKeys.indexOf(state.calMode)+1}/4　` : "") + names[state.calMode] + "：" + (state.recal && state.calMode === "t" ? "指示針の先端をタップ" : tips[state.calMode]) + skip; h.hidden = false;
   } else h.hidden = true;
   updateSetupSum();
 }
@@ -462,6 +510,13 @@ view.addEventListener("pointerdown", e => {
   if(key !== "t" && state.cal.live.needle){ delete state.cal.live.needle; state.cal.live.t = null; }  // 幾何が変わったら先端は取り直し
   store.set("cal", state.cal.live);
   const i = calKeys.indexOf(key);
+  if(state.recal){                                        // 再校正は①→④を順番に打ち直す
+    const nk = calKeys[i+1];
+    state.calMode = nk || null;
+    if(key === "t") learnNeedle(pCur);
+    if(!nk) finishRecal(); else updateCalUI();
+    return;
+  }
   const next = calKeys.slice(i+1).find(k => !state.cal.live[k]);
   state.calMode = next || null;
   if(key === "t") learnNeedle(pCur);
@@ -681,6 +736,7 @@ function readNow(){
   state.last = r;
   const entry = { t: new Date().toISOString(), v: +r.value.toFixed(4), a: +r.angleDeg.toFixed(2), c: +r.conf.toFixed(1), f: (confClass(r)!=="ok" || (tracking && tr.lost)) ? 1 : 0, s: state.src };
   if(tracking){ entry.dx = +tr.off.x.toFixed(1); entry.dy = +tr.off.y.toFixed(1); if(tr.lost) entry.tl = 1; }
+  if(state.nextNote){ entry.n = state.nextNote; state.nextNote = null; }
   state.log.push(entry);
   if(state.log.length > 20000) state.log.splice(0, state.log.length-20000);
   store.set("log", state.log);
@@ -711,7 +767,7 @@ function renderTable(){
   const rows = state.log.slice(-200).reverse();
   for(const e of rows){
     const tr = document.createElement("tr"); if(e.f) tr.className = "flag";
-    const cells = [fmtTime(e.t, true), fv(e.v), e.a.toFixed(1), e.c.toFixed(1) + (e.f ? " 要確認" : "")];
+    const cells = [fmtTime(e.t, true) + (e.n ? " ◆" + e.n : ""), fv(e.v), e.a.toFixed(1), e.c.toFixed(1) + (e.f ? " 要確認" : "")];
     cells.forEach((v,i) => { const td = document.createElement("td"); td.textContent = v; if(i) td.className="num"; tr.appendChild(td); });
     tb.appendChild(tr);
   }
@@ -813,8 +869,8 @@ const savedIv = store.get("intv", null); if(savedIv){ $("intv").value = savedIv.
 
 // ---------- CSV ----------
 function csvText(){
-  const lines = [`日時,圧力[MPa],針角度[deg],信頼度,判定,ソース,追従ずれX[px],追従ずれY[px],レンジ ${fr(range.min)}〜${fr(range.max)} MPa`];
-  for(const e of state.log) lines.push([fmtTime(e.t,true), e.v.toFixed(4), e.a.toFixed(2), e.c.toFixed(1), e.tl?"要確認(追従ロスト)":e.f?"要確認":"良好", {cam:"カメラ",img:"画像",demo:"デモ"}[e.s]||e.s, e.dx ?? "", e.dy ?? ""].join(","));
+  const lines = [`日時,圧力[MPa],針角度[deg],信頼度,判定,ソース,追従ずれX[px],追従ずれY[px],備考,レンジ ${fr(range.min)}〜${fr(range.max)} MPa`];
+  for(const e of state.log) lines.push([fmtTime(e.t,true), e.v.toFixed(4), e.a.toFixed(2), e.c.toFixed(1), e.tl?"要確認(追従ロスト)":e.f?"要確認":"良好", {cam:"カメラ",img:"画像",demo:"デモ"}[e.s]||e.s, e.dx ?? "", e.dy ?? "", e.n ?? ""].join(","));
   return "﻿" + lines.join("\r\n") + "\r\n";
 }
 function csvName(){ const d=new Date(), p=n=>String(n).padStart(2,"0"); return `gauge_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.csv`; }
@@ -933,6 +989,7 @@ function updateSetupSum(){
 }
 $("setupToggle").onclick = () => { const open = $("setupBody").hidden; if(!open && state.calMode) endCal(); setSetupOpen(open); };
 setSetupOpen(store.get("setupOpen", true));
+updateRecalBtn();
 
 // ---------- boot ----------
 updateCalUI(); renderStats(); renderTable();
